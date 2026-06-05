@@ -6,7 +6,7 @@
 
 ![Rust](https://img.shields.io/badge/Rust-1.75%2B-black?logo=rust)
 ![Version](https://img.shields.io/badge/version-1.0.0-blue?logo=rust&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue)
+![License](https://img.shields.io/badge/license-CC_BY--NC_4.0-blue)
 ![Build](https://img.shields.io/github/actions/workflow/status/raw937/saber/rust.yml?branch=main)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-success)
 ![SIMD](https://img.shields.io/badge/SIMD-AVX2%20%2F%20AVX--512-orange)
