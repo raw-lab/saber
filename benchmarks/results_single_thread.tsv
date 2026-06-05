@@ -1,0 +1,9 @@
+tool	mode	time_s	peak_mem_mb	hits	disk_mb
+BLAST	blastp	18.02	53.7	687	13
+SWORD	sw	56.11	132.4	728	11
+DIAMOND	default	2.76	51.3	569	12
+DIAMOND	sensitive	13.91	51.5	667	12
+DIAMOND	more-sens	13.69	51.6	670	12
+SABER	default	8.92	38.4	691	24
+SABER	fast	5.09	38.8	683	24
+SABER	sensitive	48.01	480.3	728	24
