@@ -375,6 +375,7 @@ Covers the Smith–Waterman kernel, affine-gap traceback, indexed-vs-brute-force
 **Creative Commons Attribution-NonCommercial (CC BY-NC 4.0)**
 
 See the `LICENSE` file for details.
+
 ---
 
 # 📖 Citation
@@ -383,7 +384,7 @@ If you use **SABER** in published work, please cite:
 
 ```bibtex
 @software{saber_2026,
-  author  = {White, Richard Allen III},
+  author  = {White III, Richard Allen},
   title   = {SABER: a fast Smith--Waterman protein homology search engine in Rust},
   year    = {2026},
   url     = {https://github.com/raw937/saber},
