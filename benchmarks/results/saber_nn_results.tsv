@@ -1,0 +1,4 @@
+query1_human_HBA_coding_partial	db1_identical_to_HBA_query	100.00	300	0	0	1	300	1	300	1.42e-158	542.3
+query1_human_HBA_coding_partial	db2_HBA_partial_with_a_few_substitutions	93.94	165	10	0	1	165	1	165	1.03e-71	253.8
+query1_human_HBA_coding_partial	db4_GC_rich_distant	90.00	10	1	0	56	65	1	10	8.763	14.8
+query2_random_AT_rich	db3_AT_rich_match_for_query2	100.00	118	0	0	1	118	1	118	3.55e-60	214.1

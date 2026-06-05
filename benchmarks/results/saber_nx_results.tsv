@@ -1,0 +1,10 @@
+query1_human_HBA_coding_partial|frame+1	db1_identical_to_query1	100.00	100	0	0	1	100	1	100	3.99e-69	243.5
+query1_human_HBA_coding_partial|frame+1	db2_hemoglobin_beta_similar	43.27	104	51	8	3	100	4	105	3.99e-25	97.3
+query1_human_HBA_coding_partial|frame+1	db3_myoglobin_distant_homolog	31.43	105	65	7	1	99	1	104	5.49e-9	43.7
+query1_human_HBA_coding_partial|frame-1	db1_identical_to_query1	48.00	25	13	0	30	54	51	75	0.023	21.7
+query1_human_HBA_coding_partial|frame+3	db4_kinase_with_query2_motif	32.00	25	17	0	58	82	23	47	0.395	17.6
+query1_human_HBA_coding_partial|frame-3	db3_myoglobin_distant_homolog	25.00	24	18	0	62	85	15	38	1.025	16.2
+query1_human_HBA_coding_partial|frame-1	db2_hemoglobin_beta_similar	41.18	17	10	0	26	42	19	35	1.955	15.3
+query1_human_HBA_coding_partial|frame-1	db3_myoglobin_distant_homolog	29.41	34	19	5	58	91	1	29	1.955	15.3
+query1_human_HBA_coding_partial|frame-3	db4_kinase_with_query2_motif	45.45	11	6	0	71	81	37	47	1.935	15.3
+query1_human_HBA_coding_partial|frame-2	db2_hemoglobin_beta_similar	42.11	19	11	0	1	19	82	100	2.659	14.8

@@ -1,0 +1,4 @@
+query1_human_HBA_coding_partial	db1_identical_to_query1	100.000	100	0	0	1	300	1	100	1.11e-74	206
+query1_human_HBA_coding_partial	db2_hemoglobin_beta_similar	43.269	104	51	3	7	300	4	105	5.13e-26	83.2
+query1_human_HBA_coding_partial	db3_myoglobin_distant_homolog	30.476	105	66	2	1	297	1	104	8.63e-08	35.8
+query1_human_HBA_coding_partial	db3_myoglobin_distant_homolog	55.556	9	4	0	61	87	120	128	0.85	15.8

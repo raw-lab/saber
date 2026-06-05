@@ -1,0 +1,4 @@
+query1_human_hemoglobin_alpha	db1_identical_to_query1	100.000	142	0	0	1	142	1	142	8.27e-106	286
+query1_human_hemoglobin_alpha	db2_hemoglobin_beta_similar	43.448	145	74	3	3	141	4	146	9.13e-38	114
+query1_human_hemoglobin_alpha	db3_myoglobin_distant_homolog	27.517	149	100	3	1	142	1	148	3.75e-13	51.2
+query2_short_kinase_motif	db4_kinase_with_query2_motif	100.000	57	0	0	2	58	8	64	6.34e-42	119
