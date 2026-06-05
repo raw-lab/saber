@@ -372,8 +372,9 @@ Covers the Smith–Waterman kernel, affine-gap traceback, indexed-vs-brute-force
 
 # 📄 License
 
-Dual-licensed under **MIT** and **Apache 2.0**. See `LICENSE-MIT` and `LICENSE-APACHE`.
+**Creative Commons Attribution-NonCommercial (CC BY-NC 4.0)**
 
+See the `LICENSE` file for details.
 ---
 
 # 📖 Citation
