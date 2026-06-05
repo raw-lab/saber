@@ -1,0 +1,67 @@
+[package]
+name = "saber"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.70"
+authors = ["Richard Allen White III <r.white@uncc.edu>"]
+description = "SABER: GPU-accelerated Smith-Waterman homology search with BLAST-like output"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/raw937/saber"
+readme = "README.md"
+keywords = ["bioinformatics", "alignment", "blast", "homology", "smith-waterman"]
+categories = ["science", "command-line-utilities"]
+
+# Pinned to versions that work on Rust 1.75 (no edition2024 crates)
+[dependencies]
+clap = { version = "=4.4.18", features = ["derive"] }
+clap_derive = "=4.4.7"
+rayon = "=1.10.0"
+rayon-core = "=1.12.1"
+serde = { version = "=1.0.210", features = ["derive"] }
+serde_json = "=1.0.128"
+num_cpus = "1.16"
+lazy_static = "1.4"
+libc = "0.2"
+log = "0.4"
+env_logger = "=0.10.2"
+anyhow = "=1.0.89"
+thiserror = "=1.0.69"
+
+# Persistent on-disk index: memory-mapped reads (memmap2) + safe POD slice
+# reinterpretation of the mapped bytes (bytemuck).
+memmap2 = "0.9"
+bytemuck = "1"
+
+# CUDA backend. cudarc 0.9.15 supports NVRTC for runtime kernel compilation,
+# which is what we use — the kernel source is embedded in the binary via
+# include_str! and compiled when CudaExecutor::new() is called.
+# Requires CUDA toolkit 11.0+ on the build/run host.
+cudarc = { version = "=0.9.15", features = ["nvrtc"], optional = true }
+ocl = { version = "0.19", optional = true }
+
+[features]
+default = []
+gpu-cuda = ["cudarc"]
+gpu-opencl = ["ocl"]
+gpu = ["gpu-cuda", "gpu-opencl"]
+
+[[bin]]
+name = "saber"
+path = "src/bin/main.rs"
+
+[lib]
+name = "saber_rs"
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 1
+
+[[example]]
+name = "bench_simd"
+path = "examples/bench_simd.rs"
