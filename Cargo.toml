@@ -1,5 +1,5 @@
 [package]
-name = "saber-cw"
+name = "saber-sw"
 version = "1.0.0"
 edition = "2021"
 rust-version = "1.71"
