@@ -392,13 +392,11 @@ See the `LICENSE` file for details.
 
 If you use **SABER** in published work, please cite:
 
-## 📚 Citing
-
-If you are publishing results obtained using PyGAGE, please cite: <br />
+If you are publishing results obtained using SABER, please cite: <br />
 - Pre-Print: White III RA & Figueroa III JL. 2026. SABER: GPU-accelerated Smith-Waterman homology search with BLAST-like output. bioRxiv.
 
 If you are publishing results obtained using SABER, please cite also cite SWORD: <br />
--[SWORD](https://academic.oup.com/bioinformatics/article/32/17/i680/2450775) Vaser R, Pavlović D, Šikić M. SWORD—a highly efficient protein database search. Bioinformatics. 2016 Sep;32(17):i680-i684. <br />
+- Vaser R, Pavlović D, Šikić M. SWORD—a highly efficient protein database search. [Bioinformatics](https://academic.oup.com/bioinformatics/article/32/17/i680/2450775). 2016 Sep;32(17):i680-i684.  <br />
 
 We stand on the shoulders of giants - Robert Vaser work continues to inspire me and inspired this work, thank you and please cite SWORD.
 
