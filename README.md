@@ -156,7 +156,7 @@ rustup default stable
 ### From crates.io
 
 ```bash
-cargo install saber-cw
+cargo install saber-sw
 ```
 
 ### From source
@@ -178,7 +178,7 @@ The default build is CPU-only (small binary, no toolkit dependency). To compile 
 ### From crates.io
 
 ```bash
-cargo install saber-cw --features gpu-cuda
+cargo install saber-sw --features gpu-cuda
 ```
 
 ### From source
