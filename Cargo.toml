@@ -2,14 +2,23 @@
 name = "saber"
 version = "1.0.0"
 edition = "2021"
-rust-version = "1.70"
-authors = ["Richard Allen White III <r.white@uncc.edu>"]
+rust-version = "1.71"
+authors = ["Richard Allen White III <rwhit101@charlotte.edu>"]
 description = "SABER: GPU-accelerated Smith-Waterman homology search with BLAST-like output"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/raw937/saber"
+license = "CC-BY-NC-4.0"
+homepage = "https://github.com/raw-lab/saber"
+repository = "https://github.com/raw-lab/saber"
+documentation = "https://docs.rs/saber"
 readme = "README.md"
 keywords = ["bioinformatics", "alignment", "blast", "homology", "smith-waterman"]
 categories = ["science", "command-line-utilities"]
+include = [
+	"/src/**/*.rs",
+	"/src/**/*.cu",
+	"/Cargo.toml",
+	"/README.md",
+	"/LICENSE",
+]
 
 # Pinned to versions that work on Rust 1.75 (no edition2024 crates)
 [dependencies]
