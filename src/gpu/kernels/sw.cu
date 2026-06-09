@@ -36,7 +36,21 @@
 //   Nucleotide 5-letter: ACGTN → 0..4 (we still use the 24x24 matrix shape;
 //   only the top-left 5x5 region matters for nucleotide mode).
 
-#include <stdint.h>
+
+// NVRTC compilation does not have access to standard host include paths,
+// so we define the required fixed-width integer types locally instead of
+// including <stdint.h>.
+
+//#include <stdint.h>
+typedef unsigned char      uint8_t;
+//typedef unsigned short     uint16_t;
+typedef unsigned int       uint32_t;
+typedef unsigned long long uint64_t;
+typedef signed char        int8_t;
+typedef short              int16_t;
+typedef int                int32_t;
+//typedef long long          int64_t;
+
 
 #define SABER_ALPHABET_SIZE 24
 #define SABER_NEG_INF      ((int16_t)-30000)
