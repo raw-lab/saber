@@ -156,13 +156,13 @@ rustup default stable
 ### From crates.io
 
 ```bash
-cargo install saber
+cargo install saber-cw
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/raw937/saber
+git clone https://github.com/raw-lab/saber
 cd saber
 cargo install --path .
 ```
@@ -175,8 +175,18 @@ This builds the optimized binary into `~/.cargo/bin/saber` — make sure that di
 
 The default build is CPU-only (small binary, no toolkit dependency). To compile the CUDA Smith–Waterman path you need the CUDA toolkit 11.0+ on the build host:
 
+### From crates.io
+
 ```bash
-cargo build --release --features gpu-cuda
+cargo install saber-cw --features gpu-cuda
+```
+
+### From source
+
+```bash
+git clone https://github.com/raw-lab/saber
+cd saber
+cargo install --path .
 ```
 
 `--gpu` cleanly falls back to the multi-threaded CPU pipeline (with a clear message) when the binary wasn't built with CUDA, or when no device is visible.
@@ -387,7 +397,7 @@ If you use **SABER** in published work, please cite:
   author  = {White III, Richard Allen},
   title   = {SABER: a fast Smith--Waterman protein homology search engine in Rust},
   year    = {2026},
-  url     = {https://github.com/raw937/saber},
+  url     = {https://github.com/raw-lab/saber},
   version = {1.0.0}
 }
 ```
@@ -410,8 +420,8 @@ Pull requests and issues are encouraged.
 
 # 📞 Support
 
-* 🐛 **Issues:** [SABER Issues](https://github.com/raw937/saber/issues)
-* 📧 **Contact:** [Dr. Richard Allen White III](mailto:rwhit101@uncc.edu)
+* 🐛 **Issues:** [SABER Issues](https://github.com/raw-lab/saber/issues)
+* 📧 **Contact:** [Dr. Richard Allen White III](mailto:rwhit101@charlotte.edu)
 
   If you have any questions or feedback, please feel free to get in touch by email. </br>
 
