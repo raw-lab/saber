@@ -1,5 +1,5 @@
 [package]
-name = "saber"
+name = "saber-cw"
 version = "1.0.0"
 edition = "2021"
 rust-version = "1.71"
@@ -51,8 +51,8 @@ ocl = { version = "0.19", optional = true }
 [features]
 default = []
 gpu-cuda = ["cudarc"]
-gpu-opencl = ["ocl"]
-gpu = ["gpu-cuda", "gpu-opencl"]
+#gpu-opencl = ["ocl"]
+gpu = ["gpu-cuda"]
 
 [[bin]]
 name = "saber"
