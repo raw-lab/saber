@@ -398,7 +398,7 @@ If you are publishing results obtained using SABER, please cite: <br />
 If you are publishing results obtained using SABER, please cite also cite SWORD: <br />
 - Vaser R, Pavlović D, Šikić M. SWORD—a highly efficient protein database search. [Bioinformatics](https://academic.oup.com/bioinformatics/article/32/17/i680/2450775). 2016 Sep;32(17):i680-i684.  <br />
 
-We stand on the shoulders of giants - Robert Vaser work continues to inspire me and inspired this work, thank you and please cite SWORD.
+We stand on the shoulders of giants - Robert Vaser's work continues to inspire me and inspired this work, thank you and please cite SWORD.
 
 ---
 
