@@ -147,16 +147,24 @@ impl PostingsBuf {
 /// rebuild entirely on repeated runs.
 enum IndexData {
     Owned {
-        offsets: Vec<u32>,
+        /// Cumulative postings offsets, one per k-mer bucket + 1. Values reach
+        /// `num_postings` (≈ total residues), so this is u64: a >4 GiB database
+        /// would overflow u32 here.
+        offsets: Vec<u64>,
         postings: PostingsBuf,
         enc_buf: Vec<u8>,
-        enc_off: Vec<u32>,
-        /// Per-subject length (residues). Length = num_subjects.
+        /// Cumulative byte offsets into `enc_buf`, one per subject + 1. Values
+        /// reach `total_residues`, so u64 — the field that used to overflow on
+        /// multi-gigabyte databases.
+        enc_off: Vec<u64>,
+        /// Per-subject length (residues). Length = num_subjects. A single
+        /// sequence is always < 4 GiB, so u32 is sufficient here.
         subj_lens: Vec<u32>,
         /// Concatenated subject ID strings.
         id_blob: Vec<u8>,
-        /// id_offsets[i]..id_offsets[i+1] is subject i's ID in id_blob.
-        id_offsets: Vec<u32>,
+        /// id_offsets[i]..id_offsets[i+1] is subject i's ID in id_blob. u64
+        /// because the concatenated ID blob can exceed 4 GiB on huge databases.
+        id_offsets: Vec<u64>,
     },
     Mapped {
         mmap: memmap2::Mmap,
@@ -251,9 +259,9 @@ impl KmerIndex {
         // later passes, eliminating the intermediate Vec<Vec<u8>>.
         let total_residues: usize = subjects.iter().map(|s| s.len()).sum();
         let mut enc_buf: Vec<u8> = Vec::with_capacity(total_residues);
-        let mut enc_off: Vec<u32> = Vec::with_capacity(subjects.len() + 1);
-        enc_off.push(0u32);
-        let mut acc: u32 = 0;
+        let mut enc_off: Vec<u64> = Vec::with_capacity(subjects.len() + 1);
+        enc_off.push(0u64);
+        let mut acc: u64 = 0;
         let mut max_subj_len: usize = 0;
         for s in subjects {
             // Encode in-place: each ASCII byte → encoded byte (0..alphabet-1)
@@ -262,8 +270,11 @@ impl KmerIndex {
             for &c in *s {
                 enc_buf.push(encode_byte(c).unwrap_or(255));
             }
-            acc = acc.checked_add(s.len() as u32)
-                .expect("encoded subject offsets overflowed u32");
+            // u64 accumulator: a multi-gigabyte database used to overflow the
+            // old u32 here ("encoded subject offsets overflowed u32"). u64 holds
+            // any realistic total residue count.
+            acc = acc.checked_add(s.len() as u64)
+                .expect("encoded subject offsets overflowed u64 (impossibly large database)");
             enc_off.push(acc);
             if s.len() > max_subj_len { max_subj_len = s.len(); }
         }
@@ -299,17 +310,16 @@ impl KmerIndex {
             );
 
         // ---- Build offsets via prefix sum. ----
-        let mut offsets = Vec::with_capacity(num_kmers + 1);
-        offsets.push(0u32);
+        // u64 offsets: `sum` reaches the total number of k-mer occurrences,
+        // which for a multi-gigabyte database exceeds u32::MAX. The old u32
+        // offsets asserted-and-aborted here ("index too large for u32
+        // postings"); u64 scales to arbitrarily large databases.
+        let mut offsets: Vec<u64> = Vec::with_capacity(num_kmers + 1);
+        offsets.push(0u64);
         let mut sum: u64 = 0;
         for &c in &counts {
             sum += c as u64;
-            assert!(
-                sum < u32::MAX as u64,
-                "index too large for u32 postings (sum={})",
-                sum
-            );
-            offsets.push(sum as u32);
+            offsets.push(sum);
         }
         drop(counts);
 
@@ -378,7 +388,7 @@ impl KmerIndex {
     // ---- Data accessors (uniform over owned / mmap backing) ------------
 
     #[inline]
-    fn offsets(&self) -> &[u32] {
+    fn offsets(&self) -> &[u64] {
         match &self.data {
             IndexData::Owned { offsets, .. } => offsets,
             IndexData::Mapped { mmap, offsets, .. } => {
@@ -396,7 +406,7 @@ impl KmerIndex {
     }
 
     #[inline]
-    fn enc_off(&self) -> &[u32] {
+    fn enc_off(&self) -> &[u64] {
         match &self.data {
             IndexData::Owned { enc_off, .. } => enc_off,
             IndexData::Mapped { mmap, enc_off, .. } => {
@@ -447,7 +457,7 @@ impl KmerIndex {
         }
     }
 
-    fn id_offsets(&self) -> &[u32] {
+    fn id_offsets(&self) -> &[u64] {
         match &self.data {
             IndexData::Owned { id_offsets, .. } => id_offsets,
             IndexData::Mapped { mmap, id_offsets, .. } => {
@@ -497,11 +507,11 @@ impl KmerIndex {
             subj_lens.extend_from_slice(lens);
             id_blob.clear();
             id_offsets.clear();
-            id_offsets.push(0);
-            let mut acc: u32 = 0;
+            id_offsets.push(0u64);
+            let mut acc: u64 = 0;
             for id in ids {
                 id_blob.extend_from_slice(id.as_bytes());
-                acc += id.len() as u32;
+                acc += id.len() as u64;
                 id_offsets.push(acc);
             }
         }
@@ -513,14 +523,16 @@ impl KmerIndex {
     // rebuild on mismatch rather than silent corruption):
     //
     //   [Header: fixed 192 bytes]
-    //   [offsets: (num_kmers+1) * u32]      8-byte aligned
+    //   [offsets: (num_kmers+1) * u64]      8-byte aligned
     //   [postings: num_postings * (4|8)]    8-byte aligned
     //   [enc_buf: total_residues * u8]      8-byte aligned
-    //   [enc_off: (num_subjects+1) * u32]   8-byte aligned
+    //   [enc_off: (num_subjects+1) * u64]   8-byte aligned
     //   [subj_lens: num_subjects * u32]     8-byte aligned
-    //   [id_offsets: (num_subjects+1) * u32]8-byte aligned
+    //   [id_offsets: (num_subjects+1) * u64]8-byte aligned
     //   [id_blob: bytes]                    8-byte aligned
     //
+    // offsets / enc_off / id_offsets are u64 (format v3) so the index scales
+    // past 4 GiB of residues; subj_lens stays u32 (one sequence < 4 GiB).
     // Sections are padded to 8-byte boundaries so bytemuck can reinterpret
     // mapped bytes as &[u32]/&[u64] without copying or misalignment.
 
@@ -556,18 +568,18 @@ impl KmerIndex {
             *cursor = start + len;
             (start as u64, len as u64)
         };
-        let (off_offsets, len_offsets) = sec(&mut cursor, offsets.len() * 4);
+        let (off_offsets, len_offsets) = sec(&mut cursor, offsets.len() * 8);
         let (off_post, len_post) = sec(&mut cursor, postings_bytes.len());
         let (off_enc, len_enc) = sec(&mut cursor, enc_buf.len());
-        let (off_encoff, len_encoff) = sec(&mut cursor, enc_off.len() * 4);
+        let (off_encoff, len_encoff) = sec(&mut cursor, enc_off.len() * 8);
         let (off_lens, len_lens) = sec(&mut cursor, subj_lens.len() * 4);
-        let (off_idoff, len_idoff) = sec(&mut cursor, id_offsets.len() * 4);
+        let (off_idoff, len_idoff) = sec(&mut cursor, id_offsets.len() * 8);
         let (off_idblob, len_idblob) = sec(&mut cursor, id_blob.len());
 
         // ---- Header (192 bytes) ----
         let mut hdr = Vec::with_capacity(128);
         hdr.extend_from_slice(b"SABERIDX");                 // 8  magic
-        hdr.extend_from_slice(&2u32.to_le_bytes());          // 4  format version
+        hdr.extend_from_slice(&3u32.to_le_bytes());          // 4  format version (3 = u64 offsets)
         hdr.extend_from_slice(&0x0102_0304u32.to_le_bytes()); // 4  endian marker
         hdr.extend_from_slice(&(self.k as u32).to_le_bytes());
         hdr.extend_from_slice(&(self.alphabet_size as u32).to_le_bytes());
@@ -622,9 +634,14 @@ impl KmerIndex {
         let rd_u64 = |o: usize| u64::from_le_bytes(mmap[o..o + 8].try_into().unwrap());
 
         let version = rd_u32(8);
-        if version != 2 {
+        if version != 3 {
+            let hint = if version == 2 {
+                " (v2 used 32-bit offsets; rebuild with --makedb to get 64-bit offsets)"
+            } else {
+                "; rebuild"
+            };
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
-                format!("SABER index format version {version} != 2; rebuild")));
+                format!("SABER index format version {version} != 3{hint}")));
         }
         if rd_u32(12) != 0x0102_0304 {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
@@ -659,11 +676,18 @@ impl KmerIndex {
                     "SABER index section out of bounds"));
             }
         }
-        for r in [offsets, enc_off, subj_lens, id_offsets] {
-            if r.start % 4 != 0 {
+        // offsets / enc_off / id_offsets are u64 → need 8-byte alignment to
+        // reinterpret as &[u64]; subj_lens is u32 → 4-byte. All sections are
+        // 8-padded on write, so both hold.
+        for r in [offsets, enc_off, id_offsets] {
+            if r.start % 8 != 0 {
                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
-                    "SABER index u32 section misaligned"));
+                    "SABER index u64 section misaligned"));
             }
+        }
+        if subj_lens.start % 4 != 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
+                "SABER index u32 section misaligned"));
         }
         if !postings_compact && postings.start % 8 != 0 {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
@@ -732,10 +756,10 @@ impl KmerIndex {
         let postings_bytes = self.postings_u32().map(|s| s.len() * 4)
             .or_else(|| self.postings_u64().map(|s| s.len() * 8))
             .unwrap_or(0);
-        self.offsets().len() * 4
+        self.offsets().len() * 8
             + postings_bytes
             + self.enc_buf().len()
-            + self.enc_off().len() * 4
+            + self.enc_off().len() * 8
     }
 
     /// Query the index with a raw ASCII protein query. Returns one
@@ -1279,6 +1303,63 @@ mod tests {
         std::fs::write(&path, b"this is not a SABER index file at all, padding..............").unwrap();
         assert!(KmerIndex::open(&path).is_err());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn index_uses_u64_offsets_format_v3() {
+        // Regression guard for the "encoded subject offsets overflowed u32"
+        // bug: a >4 GiB database overflowed the old 32-bit offset arrays.
+        // The fix widens offsets / enc_off / id_offsets to u64 and bumps the
+        // on-disk format to v3. We can't allocate 4 GiB in a unit test, so we
+        // assert the *format* instead: the persisted offset sections must use
+        // 8-byte (u64) elements, and old v2 files must be rejected.
+        let subjects: Vec<&[u8]> = vec![
+            b"MVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSF",
+            b"GSAQVKGHGKKVADALTNAVAHVDDMPNALSALSDLHA",
+            b"MVLSPADKTNVKAAWGKVGAHAGEY",
+        ];
+        let ids = vec!["sp|P1".to_string(), "sp|P2".to_string(), "tr|P3".to_string()];
+        let lens: Vec<u32> = subjects.iter().map(|s| s.len() as u32).collect();
+        let mut mem = KmerIndex::build_protein(&subjects, 4);
+        mem.set_subject_meta(&ids, &lens);
+
+        let mut path = std::env::temp_dir();
+        path.push(format!("saber_u64fmt_{}.sdx", std::process::id()));
+        mem.save(&path).expect("save");
+        let bytes = std::fs::read(&path).expect("read");
+
+        // Header: magic[0..8], format version u32 @8 (must be 3).
+        assert_eq!(&bytes[0..8], b"SABERIDX");
+        let version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        assert_eq!(version, 3, "persistent format must be v3 (u64 offsets)");
+
+        // Section table: 7 (off u64, len u64) pairs starting at byte 48.
+        // enc_off is pair index 3 → its length lives at byte 48 + 3*16 + 8.
+        let enc_off_len = u64::from_le_bytes(
+            bytes[48 + 3 * 16 + 8..48 + 3 * 16 + 16].try_into().unwrap());
+        assert_eq!(enc_off_len as usize, (subjects.len() + 1) * 8,
+            "enc_off must be stored as u64 (8 bytes/elem), not u32");
+        // id_offsets is pair index 5 → 8 bytes/elem too.
+        let id_off_len = u64::from_le_bytes(
+            bytes[48 + 5 * 16 + 8..48 + 5 * 16 + 16].try_into().unwrap());
+        assert_eq!(id_off_len as usize, (subjects.len() + 1) * 8,
+            "id_offsets must be stored as u64");
+
+        // A v2-stamped file (32-bit offsets) must be cleanly rejected.
+        let mut v2 = bytes.clone();
+        v2[8..12].copy_from_slice(&2u32.to_le_bytes());
+        let mut p2 = std::env::temp_dir();
+        p2.push(format!("saber_u64fmt_v2_{}.sdx", std::process::id()));
+        std::fs::write(&p2, &v2).unwrap();
+        let err = match KmerIndex::open(&p2) {
+            Ok(_) => panic!("a v2 (32-bit offset) index must be rejected"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("32-bit") || err.contains("rebuild"),
+            "v2 rejection should hint at rebuilding for 64-bit offsets: {err}");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&p2);
     }
 
     #[test]
