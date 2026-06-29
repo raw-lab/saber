@@ -44,7 +44,7 @@ use cudarc::nvrtc::compile_ptx;
 use crate::algorithm::Scoring;
 
 use super::encoding::{
-    encode_nucleotide, flatten_matrix, pack_sequences, PROTEIN_ALPHABET_SIZE,
+    encode_nucleotide, encode_protein, flatten_matrix, pack_sequences, PROTEIN_ALPHABET_SIZE,
 };
 use super::{GpuExecutor, GpuScore};
 
@@ -87,12 +87,9 @@ impl CudaExecutor {
             .with_context(|| format!("could not open CUDA device {ordinal}"))?;
 
         log::info!("Compiling SABER GPU kernels via NVRTC...");
-        let ptx = compile_ptx(KERNEL_SOURCE)
-            .map_err(|e| {
-                eprintln!("NVRTC ERROR:\n{:#?}", e);
-                e
-            })
-            .context("NVRTC failed to compile sw.cu")?;
+        let ptx = compile_ptx(KERNEL_SOURCE).context(
+            "NVRTC failed to compile sw.cu — check that the CUDA toolkit is installed and visible",
+        )?;
 
         device
             .load_ptx(ptx, MODULE_NAME, &[KERNEL_PROTEIN, KERNEL_NUCLEOTIDE])
@@ -115,13 +112,13 @@ impl CudaExecutor {
         })
     }
 
-//    /// Free device memory budget in bytes. Useful for picking a batch size
-//    /// before launching score_batch.
-//    pub fn free_device_memory(&self) -> Result<usize> {
-//        self.device
-//            .free_memory()
-//            .map_err(|e| anyhow!("could not query CUDA free memory: {e}"))
-//    }
+    /// Free device memory budget in bytes. Useful for picking a batch size
+    /// before launching score_batch.
+    pub fn free_device_memory(&self) -> Result<usize> {
+        self.device
+            .free_memory()
+            .map_err(|e| anyhow!("could not query CUDA free memory: {e}"))
+    }
 }
 
 impl GpuExecutor for CudaExecutor {
@@ -209,22 +206,21 @@ impl CudaExecutor {
         gap_open: i32,
         gap_extend: i32,
     ) -> Result<Vec<i32>> {
-        let query_enc = query.to_vec();
+        let query_enc = encode_protein(query);
         let query_len = query_enc.len() as i32;
         let n_subj = subjects.len() as i32;
 
-        let (subj_packed, subj_offsets) = pack_sequences(subjects, |s| s.to_vec());
+        let (subj_packed, subj_offsets) = pack_sequences(subjects, |s| encode_protein(s));
         let sub_matrix = flatten_matrix(matrix);
         debug_assert_eq!(sub_matrix.len(), PROTEIN_ALPHABET_SIZE * PROTEIN_ALPHABET_SIZE);
 
         // Allocate + copy.
-        let work_size = (subjects.len() * query_enc.len()) as usize;
-
         let d_query: CudaSlice<u8> = self.device.htod_copy(query_enc)?;
         let d_subjects: CudaSlice<u8> = self.device.htod_copy(subj_packed)?;
         let d_offsets: CudaSlice<u32> = self.device.htod_copy(subj_offsets)?;
         let d_sub_matrix: CudaSlice<i8> = self.device.htod_copy(sub_matrix)?;
 
+        let work_size = (subjects.len() * query_enc.len()) as usize;
         // alloc_zeros gets us NEG_INF-free init; the kernel zeros the rows itself,
         // so we don't actually need this to be zeroed — but alloc_zeros is the
         // simplest safe API in cudarc 0.9.
