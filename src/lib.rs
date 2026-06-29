@@ -28,7 +28,7 @@ pub use io::{
 pub use scoring::{BitScore, EValue, ScoreMatrix, ScoringSystem};
 pub use utils::{ProgressBar, Statistics};
 
-pub const VERSION: &str = "1.0.0";
+pub const VERSION: &str = "1.0.2";
 
 /// The SABER wordmark: "SABER" in figlet line-art with a sword blade threaded
 /// through the centre line (pommel ◉ and crossguard ╪ at the hilt, point ▶ at
