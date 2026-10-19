@@ -1,6 +1,6 @@
 .PHONY: help build release test clean docs install bench profile gpu all
 
-RUST_VERSION := 1.70.0
+RUST_VERSION := 1.75.0
 SHELL := /bin/bash
 
 help:
@@ -12,8 +12,10 @@ help:
 	@echo "  make release        - Build optimized release binary"
 	@echo "  make test           - Run all tests"
 	@echo "  make demo           - Run a smoke test against bundled example FASTA"
-	@echo "  make benchmark      - Run SABER vs NCBI BLAST side-by-side"
-	@echo "  make bench          - Run cargo bench"
+	@echo "  make benchmark      - Reproducible SABER 1.0.2/1.1.0/1.2/DIAMOND suite (bench/README.md)"
+	@echo "  make benchmark-blast - Quick SABER vs NCBI blastp run (blastp on PATH)"
+	@echo "  make bench          - Alignment-kernel micro-benchmarks"
+	@echo "  make examples       - Run the example scripts in examples/"
 	@echo "  make docs           - Generate documentation"
 	@echo "  make install        - Install saber into ~/.cargo/bin (or system bin)"
 	@echo "  make uninstall      - Remove saber binary from PATH"
@@ -49,9 +51,10 @@ test-release: check-deps
 	cargo test --release --all --verbose
 	@echo "✓ Release tests passed"
 
-bench: check-deps release
-	@echo "Running benchmarks..."
-	cargo bench --release --all
+bench: check-deps
+	@echo "Running alignment-kernel micro-benchmarks..."
+	cargo run --release --example bench_banded
+	cargo run --release --example bench_kernels
 	@echo "✓ Benchmarks complete"
 
 docs: check-deps
@@ -92,17 +95,26 @@ demo: release
 	@echo "=== tblastn (pn, translated db) ==="
 	./target/release/saber -q examples/protein_query.fa    -d examples/nucleotide_db.fa  --mode pn --outfmt m8 --quiet | head -6
 
-# Side-by-side comparison against BLAST+ (must be on PATH)
+# Reproducible comparison with SABER 1.0.2 / 1.1.0 and DIAMOND (bench/README.md).
+# Needs the public datasets and the other binaries; set V102 V110 DMD DATA DER
+# (see the header of bench/scripts/run_all.sh), optionally SECTIONS="scop decoy"
+# and BENCH_OUT (results directory).
+BENCH_OUT ?= $(CURDIR)/bench/out
 benchmark: release
+	OUT=$(BENCH_OUT) V12=$${V12:-$(CURDIR)/target/release/saber} bash bench/scripts/run_all.sh $(SECTIONS)
+	python3 -I bench/scripts/summarize.py $(BENCH_OUT)
+
+# Quick side-by-side run against NCBI BLAST+ (blastp on PATH) on the 1.x
+# benchmark files in benchmarks/results/; outputs go to benchmarks/out/.
+benchmark-blast: release
 	@command -v blastp >/dev/null 2>&1 || (echo "blastp not found — apt-get install ncbi-blast+" && exit 1)
-	@mkdir -p benchmarks
+	@mkdir -p benchmarks/out
 	@echo "=== SABER blastp ==="
-	@time ./target/release/saber -q benchmarks/bench_query.fa -d benchmarks/bench_db_5003seq.fa --mode pp -E 1e-5 --outfmt m8 --quiet > benchmarks/saber_bench5k.tsv
-	@wc -l benchmarks/saber_bench5k.tsv
+	@time ./target/release/saber -q benchmarks/results/bench_query.fa -d benchmarks/results/bench_db_5003seq.fa --mode pp -E 1e-5 --outfmt m8 --quiet > benchmarks/out/saber_bench5k.tsv
+	@wc -l benchmarks/out/saber_bench5k.tsv
 	@echo "=== NCBI blastp ==="
-	@time blastp -query benchmarks/bench_query.fa -subject benchmarks/bench_db_5003seq.fa -outfmt 6 -evalue 1e-5 > benchmarks/blast_bench5k.tsv
-	@wc -l benchmarks/blast_bench5k.tsv
-	@echo "✓ Results in benchmarks/. See benchmarks/REPORT.md for analysis."
+	@time blastp -query benchmarks/results/bench_query.fa -subject benchmarks/results/bench_db_5003seq.fa -outfmt 6 -evalue 1e-5 > benchmarks/out/blast_bench5k.tsv
+	@wc -l benchmarks/out/blast_bench5k.tsv
 
 gpu: check-deps
 	@echo "Building with CUDA GPU support..."
@@ -110,18 +122,17 @@ gpu: check-deps
 	cargo build --release --features gpu-cuda --verbose
 	@echo "✓ GPU-enabled binary: target/release/saber"
 	@echo ""
-	@echo "Smoke test (--gpu flag should detect CUDA device and use it):"
-	@echo "  ./target/release/saber -q examples/protein_query.fa -d examples/protein_db.fa \\"
-	@echo "        --mode pp --gpu --prefilter --outfmt m8"
+	@echo "Smoke test: make gpu-test (or saber --doctor --gpu for a GPU/CPU score comparison)"
 
 gpu-test: gpu
 	@echo "Running GPU smoke test..."
 	./target/release/saber -q examples/protein_query.fa -d examples/protein_db.fa \
-		--mode pp --gpu --prefilter --outfmt m8 --verbose
+		--mode pp --gpu --outfmt m8
+	./target/release/saber --doctor --gpu
 	@echo ""
-	@echo "If the output above shows 'Alignment backend: cuda', the GPU path ran."
-	@echo "If it shows 'Alignment backend: cpu-fallback', the CUDA device was not"
-	@echo "detected — check nvidia-smi and that libnvrtc is on LD_LIBRARY_PATH."
+	@echo "'region scoring on GPU backend ...' on stderr means the GPU path ran;"
+	@echo "'--gpu requested but no GPU backend is available' means it fell back to"
+	@echo "the CPU — check nvidia-smi and that libnvrtc is on LD_LIBRARY_PATH."
 
 profile: check-deps
 	@echo "Building with profiling symbols..."
@@ -132,8 +143,7 @@ profile: check-deps
 dev-setup: check-deps
 	@echo "Setting up development environment..."
 	rustup update stable
-	rustup install clippy
-	rustup install rustfmt
+	rustup component add clippy rustfmt
 	@echo "✓ Development environment ready"
 
 fmt:
@@ -160,19 +170,12 @@ clean:
 	cargo clean
 	@echo "✓ Clean complete"
 
-# Docker build
-docker-build:
-	@echo "Building Docker image..."
-	docker build -t saber:latest .
-	@echo "✓ Docker image built"
-
-docker-run:
-	docker run --rm -it saber:latest saber -h
-
-# Performance analysis
+# Performance analysis (Q= and DB= select the inputs; the bundled examples are tiny)
+Q ?= examples/protein_query.fa
+DB ?= examples/protein_db.fa
 perf-record: release
 	@echo "Recording performance with Linux perf..."
-	perf record -g ./target/release/saber -i examples/queries.fasta -d examples/database.fasta
+	perf record -g ./target/release/saber -q $(Q) -d $(DB) -o /dev/null
 	@echo "✓ Performance data recorded: perf.data"
 
 perf-report:
@@ -182,7 +185,7 @@ perf-report:
 flamegraph: release
 	@echo "Building flamegraph..."
 	cargo install flamegraph
-	cargo flamegraph --release -- -i examples/queries.fasta -d examples/database.fasta
+	cargo flamegraph --release --bin saber -- -q $(Q) -d $(DB) -o /dev/null
 	@echo "✓ Flamegraph generated: flamegraph.svg"
 
 # Coverage
@@ -240,7 +243,7 @@ show-deps:
 .SILENT: help version
 
 # Phony declarations
-.PHONY: help check-deps build release test bench docs install uninstall demo benchmark clean gpu gpu-test profile \
-        dev-setup fmt lint check all docker-build docker-run perf-record \
+.PHONY: help check-deps build release test bench docs install uninstall demo benchmark benchmark-blast clean gpu gpu-test profile \
+        dev-setup fmt lint check all perf-record \
         perf-report flamegraph coverage examples version update-deps ci-test \
         publish publish-dry show-features show-deps test-release

@@ -77,12 +77,20 @@ impl<R: Read> FastaReader<R> {
             if line.starts_with('>') {
                 // Save previous record if exists
                 if !current_id.is_empty() {
+                    // Move the buffers into the record instead of cloning
+                    // them. The old code copied the entire sequence a second
+                    // time (plus id and description) for every record.
+                    // `String::push_str` also grows geometrically, so a 313 aa
+                    // sequence can sit in a 512-byte allocation; shrinking
+                    // gives that slack back, which matters once there are
+                    // millions of records.
+                    let mut seq = std::mem::take(&mut current_seq);
+                    seq.shrink_to_fit();
                     records.push(FastaRecord::new(
-                        current_id.clone(),
-                        current_desc.clone(),
-                        current_seq.clone(),
+                        std::mem::take(&mut current_id),
+                        std::mem::take(&mut current_desc),
+                        seq,
                     ));
-                    current_seq.clear();
                 }
 
                 // Parse new header
@@ -91,14 +99,23 @@ impl<R: Read> FastaReader<R> {
                 current_id = parts[0].to_string();
                 current_desc = header.to_string();
             } else if !line.is_empty() {
-                // Append to sequence
-                current_seq.push_str(&line.to_uppercase());
+                // Append to sequence, upper-casing IN PLACE.
+                //
+                // `push_str(&line.to_uppercase())` allocated a fresh String for
+                // every sequence line in the file — tens of millions of short
+                // heap allocations on a real database, for a transformation
+                // that needs none.
+                let start = current_seq.len();
+                current_seq.push_str(line);
+                current_seq[start..].make_ascii_uppercase();
             }
         }
 
         // Save last record
         if !current_id.is_empty() {
-            records.push(FastaRecord::new(current_id, current_desc, current_seq));
+            let mut seq = current_seq;
+            seq.shrink_to_fit();
+            records.push(FastaRecord::new(current_id, current_desc, seq));
         }
 
         Ok(records)

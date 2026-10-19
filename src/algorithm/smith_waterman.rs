@@ -49,11 +49,39 @@ pub struct AlignmentResult {
     pub mismatches: usize,
     /// Number of gap columns (insertions + deletions).
     pub gaps: usize,
-    /// CIGAR string of the alignment (M/I/D).
+    /// CIGAR string of the alignment, SAM convention with the subject as the
+    /// reference: `M` aligned pair, `I` query residue against a gap, `D`
+    /// subject residue against a gap. (Before v1.2 `I`/`D` were swapped.)
     pub cigar: String,
     pub query_seq: String,
     pub subject_seq: String,
     pub match_string: String,
+    /// Number of gap openings (BLAST tabular column 6).
+    #[serde(default)]
+    pub gap_opens: usize,
+    /// Aligned pairs with a positive substitution score.
+    #[serde(default)]
+    pub positives: usize,
+    #[serde(default)]
+    pub query_length: usize,
+    #[serde(default)]
+    pub subject_length: usize,
+    /// Translated searches: frame of the query / subject (±1..3), 0 otherwise.
+    #[serde(default)]
+    pub query_frame: i8,
+    #[serde(default)]
+    pub subject_frame: i8,
+    /// False when the E-value was computed with UNCALIBRATED parameters.
+    #[serde(default = "default_true")]
+    pub evalue_calibrated: bool,
+    /// False when the traceback band hit its memory cap before reproducing
+    /// the score of the searched window (explicit fallback).
+    #[serde(default = "default_true")]
+    pub exact: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for AlignmentResult {
@@ -79,6 +107,14 @@ impl Default for AlignmentResult {
             query_seq: String::new(),
             subject_seq: String::new(),
             match_string: String::new(),
+            gap_opens: 0,
+            positives: 0,
+            query_length: 0,
+            subject_length: 0,
+            query_frame: 0,
+            subject_frame: 0,
+            evalue_calibrated: true,
+            exact: true,
         }
     }
 }
@@ -108,6 +144,51 @@ pub struct SmithWaterman {
     pub gap_open: i32,
     pub gap_extend: i32,
     pub scoring: Scoring,
+}
+
+/// Reusable buffers for [`SmithWaterman::align_with`].
+///
+/// Holds the Gotoh score rows, the packed direction matrix, and the
+/// residue→matrix-index translations. All grow to a high-water mark and are
+/// then reused, which is what removes the per-alignment allocation and
+/// zero-page traffic from the hot loop.
+#[derive(Default)]
+pub struct AlignScratch {
+    prev_h: Vec<i32>,
+    prev_f: Vec<i32>,
+    cur_h: Vec<i32>,
+    cur_e: Vec<i32>,
+    cur_f: Vec<i32>,
+    dir: Vec<u8>,
+    qidx: Vec<u8>,
+    sidx: Vec<u8>,
+}
+
+impl AlignScratch {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Release the direction matrix if an unusually large window grew it.
+    ///
+    /// Reuse is what makes the arena fast, but retention has a cost: the
+    /// traceback window is capped at 2048x2048, so one outlier alignment can
+    /// leave 4 MB resident *per thread*. On a 64-core run that is 256 MB held
+    /// for buffers that are typically twenty times smaller. Anything above the
+    /// retention threshold is handed back; ordinary alignments stay well under
+    /// it and never allocate again after the first few calls.
+    #[inline]
+    fn trim(&mut self) {
+        const RETAIN_CELLS: usize = 1 << 20; // 1 MB
+        if self.dir.len() > RETAIN_CELLS {
+            self.dir = Vec::new();
+        }
+    }
+}
+
+thread_local! {
+    static SW_SCRATCH: std::cell::RefCell<AlignScratch> =
+        std::cell::RefCell::new(AlignScratch::default());
 }
 
 impl SmithWaterman {
@@ -144,7 +225,45 @@ impl SmithWaterman {
     }
 
     /// Run Smith-Waterman on the two byte slices. Returns the best local alignment.
+    ///
+    /// Uses a thread-local scratch arena so repeated calls (the normal case —
+    /// one per surviving candidate) do not re-allocate the DP rows or the
+    /// direction matrix. Use [`Self::align_with`] to supply your own arena.
     pub fn align(&self, query: &[u8], subject: &[u8]) -> AlignmentResult {
+        SW_SCRATCH.with(|sc| self.align_with(query, subject, &mut sc.borrow_mut()))
+    }
+
+    /// Run Smith-Waterman reusing a caller-owned scratch arena.
+    ///
+    /// The forward pass is identical to the original in arithmetic and in the
+    /// direction bits it writes; the differences are all about *where the
+    /// bytes live* and *how the score is fetched*:
+    ///
+    /// * **No per-call allocation.** The original allocated five score rows
+    ///   plus a full `(m+1)·(n+1)` direction matrix on every call. That
+    ///   matrix is ~100 KB for a typical 325×313 alignment, and `vec![0u8; N]`
+    ///   routes to `alloc_zeroed`, so each call took fresh zero pages from the
+    ///   kernel and faulted them in one by one. Here the buffers grow to a
+    ///   high-water mark and are then reused untouched.
+    ///
+    /// * **No zeroing of the direction matrix.** Only cells with `i>=1, j>=1`
+    ///   are ever written, and traceback stops at `i==0 || j==0` or on a stop
+    ///   bit, so row 0 and column 0 are never read. Growing the buffer is
+    ///   therefore the only time we pay for initialisation.
+    ///
+    /// * **No per-cell branch on the scoring backend.** The original called
+    ///   `pair_score`, which matched on the `Scoring` enum and then did two
+    ///   lookups into a `[usize; 256]` table (2 KB, competing with the DP rows
+    ///   for L1) before indexing the matrix. Residues are now translated to
+    ///   matrix indices once per call, and the substitution row for the
+    ///   current query residue is hoisted out of the inner loop, so a cell
+    ///   costs one `i32` load from a 24-entry slice.
+    pub fn align_with(
+        &self,
+        query: &[u8],
+        subject: &[u8],
+        sc: &mut AlignScratch,
+    ) -> AlignmentResult {
         let m = query.len();
         let n = subject.len();
         if m == 0 || n == 0 {
@@ -154,55 +273,75 @@ impl SmithWaterman {
         let gop = self.gap_open;
         let gex = self.gap_extend;
         let neg = i32::MIN / 2;
-
-        // LINEAR-SPACE forward pass.
-        //
-        // The classic Gotoh SW keeps three full (m+1)×(n+1) i32 matrices
-        // (H, E, F) = 12 bytes/cell, which dominates peak memory for long
-        // sequences (a 2949-residue self-alignment needs ~100 MB). Here we
-        // keep only two score *rows* (H/F of the previous row, H/E/F of the
-        // current row) and a single 1-byte direction matrix used for
-        // traceback. That's ~1 byte/cell instead of 12 — a 12× reduction —
-        // and the score recurrence is unchanged, so results are identical.
-        //
-        // Direction byte layout (per cell):
-        //   bits 0-1  H origin: 0=stop(v==0) 1=diagonal 2=from-E 3=from-F
-        //   bit  2    E came from E-extend (1) vs H-open (0)
-        //   bit  3    F came from F-extend (1) vs H-open (0)
-        let mut prev_h = vec![0i32; n + 1];
-        let mut prev_f = vec![neg; n + 1];
-        let mut cur_h = vec![0i32; n + 1];
-        let mut cur_e = vec![neg; n + 1];
-        let mut cur_f = vec![neg; n + 1];
-
-        let mut dir = vec![0u8; (m + 1) * (n + 1)];
         let row = n + 1;
+        let need = row.checked_mul(m + 1).expect("alignment window too large");
+
+        // Grow-only buffers: after the first few alignments these are already
+        // large enough and the resize is a no-op.
+        if sc.dir.len() < need {
+            sc.dir.resize(need, 0);
+        }
+        for b in [&mut sc.prev_h, &mut sc.cur_h, &mut sc.cur_e, &mut sc.cur_f, &mut sc.prev_f] {
+            if b.len() < row {
+                b.resize(row, 0);
+            }
+        }
+        sc.prev_h[..row].fill(0);
+        sc.prev_f[..row].fill(neg);
+
+        // Translate residues to matrix indices once, instead of twice per cell.
+        sc.qidx.clear();
+        sc.sidx.clear();
+        let use_matrix = matches!(self.scoring, Scoring::Matrix(_));
+        if use_matrix {
+            if let Scoring::Matrix(mx) = &self.scoring {
+                sc.qidx.extend(query.iter().map(|&c| mx.char_to_idx[c as usize] as u8));
+                sc.sidx.extend(subject.iter().map(|&c| mx.char_to_idx[c as usize] as u8));
+            }
+        }
 
         let mut max_score = 0i32;
         let mut max_i = 0usize;
         let mut max_j = 0usize;
 
         for i in 1..=m {
-            let qi = query[i - 1];
-            cur_h[0] = 0;
-            cur_e[0] = neg;
-            cur_f[0] = neg;
+            sc.cur_h[0] = 0;
+            sc.cur_e[0] = neg;
+            sc.cur_f[0] = neg;
             let dbase = i * row;
+
+            // Hoist the substitution row for this query residue. For the
+            // matrix backend that is a 24-entry slice; for nucleotides we
+            // fall back to the generic per-cell scorer.
+            let mrow: Option<&[i32; 24]> = if use_matrix {
+                match &self.scoring {
+                    Scoring::Matrix(mx) => Some(&mx.matrix[sc.qidx[i - 1] as usize]),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let qi_raw = query[i - 1];
+
             for j in 1..=n {
-                let sj = subject[j - 1];
-                let s = self.pair_score(qi, sj);
+                let s = match mrow {
+                    Some(r) => r[sc.sidx[j - 1] as usize],
+                    None => self.pair_score(qi_raw, subject[j - 1]),
+                };
 
                 // E: gap consuming a subject column (query gets '-').
-                let e_open = cur_h[j - 1] - gop;
-                let e_ext = cur_e[j - 1] - gex;
-                let (e_ij, e_from_ext) = if e_ext > e_open { (e_ext, true) } else { (e_open, false) };
+                let e_open = sc.cur_h[j - 1] - gop;
+                let e_ext = sc.cur_e[j - 1] - gex;
+                let (e_ij, e_from_ext) =
+                    if e_ext > e_open { (e_ext, true) } else { (e_open, false) };
 
                 // F: gap consuming a query row (subject gets '-').
-                let f_open = prev_h[j] - gop;
-                let f_ext = prev_f[j] - gex;
-                let (f_ij, f_from_ext) = if f_ext > f_open { (f_ext, true) } else { (f_open, false) };
+                let f_open = sc.prev_h[j] - gop;
+                let f_ext = sc.prev_f[j] - gex;
+                let (f_ij, f_from_ext) =
+                    if f_ext > f_open { (f_ext, true) } else { (f_open, false) };
 
-                let diag = prev_h[j - 1] + s;
+                let diag = sc.prev_h[j - 1] + s;
 
                 let mut v = 0i32;
                 let mut horigin: u8 = 0;
@@ -210,14 +349,14 @@ impl SmithWaterman {
                 if e_ij > v { v = e_ij; horigin = 2; }
                 if f_ij > v { v = f_ij; horigin = 3; }
 
-                cur_h[j] = v;
-                cur_e[j] = e_ij;
-                cur_f[j] = f_ij;
+                sc.cur_h[j] = v;
+                sc.cur_e[j] = e_ij;
+                sc.cur_f[j] = f_ij;
 
                 let mut d = horigin;
                 if e_from_ext { d |= 0b0100; }
                 if f_from_ext { d |= 0b1000; }
-                dir[dbase + j] = d;
+                sc.dir[dbase + j] = d;
 
                 if v > max_score {
                     max_score = v;
@@ -225,15 +364,18 @@ impl SmithWaterman {
                     max_j = j;
                 }
             }
-            std::mem::swap(&mut prev_h, &mut cur_h);
-            std::mem::swap(&mut prev_f, &mut cur_f);
+            std::mem::swap(&mut sc.prev_h, &mut sc.cur_h);
+            std::mem::swap(&mut sc.prev_f, &mut sc.cur_f);
         }
 
         if max_score == 0 {
+            sc.trim();
             return AlignmentResult::default();
         }
 
-        self.traceback(&dir, query, subject, max_i, max_j, max_score, n)
+        let res = self.traceback(&sc.dir, query, subject, max_i, max_j, max_score, n);
+        sc.trim();
+        res
     }
 
     /// Walk back from the maximum-scoring cell using the direction matrix
@@ -308,7 +450,8 @@ impl SmithWaterman {
                     q_aln.push(b'-');
                     s_aln.push(sj);
                     m_aln.push(b' ');
-                    cigar_rev.push(b'I');
+                    // query gap: subject residue present -> SAM 'D'
+                    cigar_rev.push(b'D');
                     gaps += 1;
                     let extend = (d & 0b0100) != 0;
                     j -= 1;
@@ -322,7 +465,8 @@ impl SmithWaterman {
                     q_aln.push(qi);
                     s_aln.push(b'-');
                     m_aln.push(b' ');
-                    cigar_rev.push(b'D');
+                    // subject gap: query residue present -> SAM 'I'
+                    cigar_rev.push(b'I');
                     gaps += 1;
                     let extend = (d & 0b1000) != 0;
                     i -= 1;
@@ -350,6 +494,9 @@ impl SmithWaterman {
             0.0
         };
 
+        let gap_opens = cigar_rev.windows(2).filter(|w| w[1] != b'M' && w[1] != w[0]).count()
+            + usize::from(cigar_rev.first().map_or(false, |&c| c != b'M'));
+        let positives = m_aln.iter().filter(|&&c| c == b'|' || c == b'+').count();
         AlignmentResult {
             query_id: String::new(),
             subject_id: String::new(),
@@ -371,6 +518,11 @@ impl SmithWaterman {
             query_seq: String::from_utf8_lossy(&q_aln).into_owned(),
             subject_seq: String::from_utf8_lossy(&s_aln).into_owned(),
             match_string: String::from_utf8_lossy(&m_aln).into_owned(),
+            gap_opens,
+            positives,
+            query_length: query.len(),
+            subject_length: subject.len(),
+            ..AlignmentResult::default()
         }
     }
 }
@@ -465,9 +617,11 @@ mod tests {
         let r = sw.align(b"ACGTACGT", b"ACGTTACGT");
         assert_eq!(r.matches, 8, "all 8 query residues align as matches");
         assert_eq!(r.gaps, 1, "exactly one gap column");
-        assert!(r.cigar.contains("1I"), "one insertion op, got {}", r.cigar);
-        assert!(!r.cigar.contains('D'), "no deletions, got {}", r.cigar);
+        // Subject has the extra residue: SAM 'D' (reference residue vs query gap).
+        assert!(r.cigar.contains("1D"), "one deletion op, got {}", r.cigar);
+        assert!(!r.cigar.contains('I'), "no insertions, got {}", r.cigar);
         assert_eq!(r.score, 14, "8*2 - gap_open(2)");
+        assert_eq!(r.gap_opens, 1);
     }
 
     #[test]
@@ -477,8 +631,9 @@ mod tests {
         let r = sw.align(b"ACGTTACGT", b"ACGTACGT");
         assert_eq!(r.matches, 8);
         assert_eq!(r.gaps, 1);
-        assert!(r.cigar.contains("1D"), "one deletion op, got {}", r.cigar);
-        assert!(!r.cigar.contains('I'), "no insertions, got {}", r.cigar);
+        // Query has the extra residue: SAM 'I' (query residue vs reference gap).
+        assert!(r.cigar.contains("1I"), "one insertion op, got {}", r.cigar);
+        assert!(!r.cigar.contains('D'), "no deletions, got {}", r.cigar);
         assert_eq!(r.score, 14);
     }
 
@@ -494,7 +649,7 @@ mod tests {
         let r = sw.align(b"AAAACCCC", b"AAAAGGGCCCC");
         assert_eq!(r.matches, 8);
         assert_eq!(r.gaps, 3, "three gap columns");
-        assert_eq!(r.cigar, "4M3I4M", "single contiguous 3-wide gap");
+        assert_eq!(r.cigar, "4M3D4M", "single contiguous 3-wide gap (subject residues vs query gap)");
         assert_eq!(r.score, 10, "16 - (gap_open 4 + 2*gap_extend 1)");
     }
 }

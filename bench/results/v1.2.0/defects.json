@@ -1,0 +1,420 @@
+{
+ "amb": {
+  "description": "ambiguous residues (X/B/Z) in the subject",
+  "query_length": 200,
+  "subject_length": 200,
+  "v1.0.2": {
+   "score": 963,
+   "evalue": 7.95643745119739e-130,
+   "bitscore": 444.1,
+   "align_length": 199,
+   "query_range": [
+    2,
+    200
+   ],
+   "subject_range": [
+    2,
+    200
+   ],
+   "cigar": "199M",
+   "cigar_consumes": [
+    199,
+    199
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": null,
+   "query_cover": null,
+   "stdout_noise_lines": 0
+  },
+  "v1.1.0": {
+   "score": 963,
+   "evalue": 7.95643745119739e-130,
+   "bitscore": 444.1,
+   "align_length": 199,
+   "query_range": [
+    2,
+    200
+   ],
+   "subject_range": [
+    2,
+    200
+   ],
+   "cigar": "199M",
+   "cigar_consumes": [
+    199,
+    199
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": null,
+   "query_cover": null,
+   "stdout_noise_lines": 0
+  },
+  "v1.2.0": {
+   "score": 950,
+   "evalue": 4.1148634695671486e-98,
+   "bitscore": 338.4,
+   "align_length": 199,
+   "query_range": [
+    2,
+    200
+   ],
+   "subject_range": [
+    2,
+    200
+   ],
+   "cigar": "199M",
+   "cigar_consumes": [
+    199,
+    199
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": 0,
+   "query_cover": 99.5,
+   "stdout_noise_lines": 0
+  },
+  "v1.2.0 --comp-bias off": {
+   "score": 963,
+   "evalue": 1.7475079559082292e-99,
+   "bitscore": 343.0,
+   "align_length": 199,
+   "query_range": [
+    2,
+    200
+   ],
+   "subject_range": [
+    2,
+    200
+   ],
+   "cigar": "199M",
+   "cigar_consumes": [
+    199,
+    199
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": 0,
+   "query_cover": 99.5,
+   "stdout_noise_lines": 0
+  }
+ },
+ "amb2": {
+  "description": "120-residue pair identical except for an X at every fifth subject position (SABER 1.x default search drops it in its ungapped filter; 1.1.0 --no-index finds it at E = 5e-73)",
+  "query_length": 120,
+  "subject_length": 120,
+  "v1.0.2": {
+   "hits": 0
+  },
+  "v1.1.0": {
+   "hits": 0
+  },
+  "v1.2.0": {
+   "score": 533,
+   "evalue": 1.5473615303112732e-54,
+   "bitscore": 192.2,
+   "align_length": 119,
+   "query_range": [
+    1,
+    119
+   ],
+   "subject_range": [
+    1,
+    119
+   ],
+   "cigar": "119M",
+   "cigar_consumes": [
+    119,
+    119
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": 0,
+   "query_cover": 99.16666666666667,
+   "stdout_noise_lines": 0
+  },
+  "v1.1.0 --no-index": {
+   "score": 548,
+   "evalue": 4.997709937919079e-73,
+   "bitscore": 254.0,
+   "align_length": 119,
+   "query_range": [
+    1,
+    119
+   ],
+   "subject_range": [
+    1,
+    119
+   ],
+   "cigar": "119M",
+   "cigar_consumes": [
+    119,
+    119
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": null,
+   "query_cover": null,
+   "stdout_noise_lines": 0
+  }
+ },
+ "gap": {
+  "description": "alignment with one 5-residue and one 3-residue gap",
+  "query_length": 150,
+  "subject_length": 152,
+  "v1.0.2": {
+   "score": 809,
+   "evalue": 7.908795323462512e-109,
+   "bitscore": 373.6,
+   "align_length": 155,
+   "query_range": [
+    1,
+    150
+   ],
+   "subject_range": [
+    1,
+    152
+   ],
+   "cigar": "50M5I48M3D49M",
+   "cigar_consumes": [
+    152,
+    150
+   ],
+   "cigar_consistent": false,
+   "gaps_field": 8,
+   "gap_opens": null,
+   "query_cover": null,
+   "stdout_noise_lines": 0
+  },
+  "v1.1.0": {
+   "score": 809,
+   "evalue": 7.908795323462512e-109,
+   "bitscore": 373.6,
+   "align_length": 155,
+   "query_range": [
+    1,
+    150
+   ],
+   "subject_range": [
+    1,
+    152
+   ],
+   "cigar": "50M5I48M3D49M",
+   "cigar_consumes": [
+    152,
+    150
+   ],
+   "cigar_consistent": false,
+   "gaps_field": 8,
+   "gap_opens": null,
+   "query_cover": null,
+   "stdout_noise_lines": 0
+  },
+  "v1.2.0": {
+   "score": 801,
+   "evalue": 1.2459744311581195e-82,
+   "bitscore": 286.2,
+   "align_length": 155,
+   "query_range": [
+    1,
+    150
+   ],
+   "subject_range": [
+    1,
+    152
+   ],
+   "cigar": "50M5D49M3I48M",
+   "cigar_consumes": [
+    150,
+    152
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 8,
+   "gap_opens": 2,
+   "query_cover": 100.0,
+   "stdout_noise_lines": 0
+  },
+  "v1.2.0 --comp-bias off": {
+   "score": 809,
+   "evalue": 1.7833667179473554e-83,
+   "bitscore": 289.0,
+   "align_length": 155,
+   "query_range": [
+    1,
+    150
+   ],
+   "subject_range": [
+    1,
+    152
+   ],
+   "cigar": "50M5D48M3I49M",
+   "cigar_consumes": [
+    150,
+    152
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 8,
+   "gap_opens": 2,
+   "query_cover": 100.0,
+   "stdout_noise_lines": 0
+  }
+ },
+ "long": {
+  "description": "3,000-residue identical pair (v1.x traceback window cap = 2,048)",
+  "query_length": 3000,
+  "subject_length": 3000,
+  "v1.0.2": {
+   "score": 11987,
+   "evalue": 2.2250738585072014e-308,
+   "bitscore": 5495.3,
+   "align_length": 2048,
+   "query_range": [
+    476,
+    2523
+   ],
+   "subject_range": [
+    476,
+    2523
+   ],
+   "cigar": "2048M",
+   "cigar_consumes": [
+    2048,
+    2048
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": null,
+   "query_cover": null,
+   "stdout_noise_lines": 0
+  },
+  "v1.1.0": {
+   "score": 11987,
+   "evalue": 2.2250738585072014e-308,
+   "bitscore": 5495.3,
+   "align_length": 2048,
+   "query_range": [
+    476,
+    2523
+   ],
+   "subject_range": [
+    476,
+    2523
+   ],
+   "cigar": "2048M",
+   "cigar_consumes": [
+    2048,
+    2048
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": null,
+   "query_cover": null,
+   "stdout_noise_lines": 0
+  },
+  "v1.2.0": {
+   "score": 17521,
+   "evalue": 2.2250738585072014e-308,
+   "bitscore": 6147.8,
+   "align_length": 3000,
+   "query_range": [
+    1,
+    3000
+   ],
+   "subject_range": [
+    1,
+    3000
+   ],
+   "cigar": "3000M",
+   "cigar_consumes": [
+    3000,
+    3000
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": 0,
+   "query_cover": 100.0,
+   "stdout_noise_lines": 0
+  }
+ },
+ "sat": {
+  "description": "4,000-residue poly-W identical pair (exact score 44,000, above the 16-bit range). SABER 1.2's default search reports no hit by design: tantan masks the homopolymer for seeding and the composition-bias correction removes the score of a pure poly-W alignment; the extra run with both disabled shows the exact score",
+  "query_length": 4000,
+  "subject_length": 4300,
+  "v1.0.2": {
+   "score": 22528,
+   "evalue": 2.2250738585072014e-308,
+   "bitscore": 10325.2,
+   "align_length": 2048,
+   "query_range": [
+    976,
+    3023
+   ],
+   "subject_range": [
+    976,
+    3023
+   ],
+   "cigar": "2048M",
+   "cigar_consumes": [
+    2048,
+    2048
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": null,
+   "query_cover": null,
+   "stdout_noise_lines": 0
+  },
+  "v1.1.0": {
+   "score": 22528,
+   "evalue": 2.2250738585072014e-308,
+   "bitscore": 10325.2,
+   "align_length": 2048,
+   "query_range": [
+    976,
+    3023
+   ],
+   "subject_range": [
+    976,
+    3023
+   ],
+   "cigar": "2048M",
+   "cigar_consumes": [
+    2048,
+    2048
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": null,
+   "query_cover": null,
+   "stdout_noise_lines": 0
+  },
+  "v1.2.0": {
+   "hits": 0
+  },
+  "v1.2.0 --masking none --comp-bias off": {
+   "score": 44000,
+   "evalue": 2.2250738585072014e-308,
+   "bitscore": 15430.7,
+   "align_length": 4000,
+   "query_range": [
+    1,
+    4000
+   ],
+   "subject_range": [
+    1,
+    4000
+   ],
+   "cigar": "4000M",
+   "cigar_consumes": [
+    4000,
+    4000
+   ],
+   "cigar_consistent": true,
+   "gaps_field": 0,
+   "gap_opens": 0,
+   "query_cover": 100.0,
+   "stdout_noise_lines": 0
+  }
+ }
+}

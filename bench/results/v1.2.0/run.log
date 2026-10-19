@@ -1,0 +1,387 @@
+[14:34:38] === section env ===
+[14:34:39] === section scop ===
+[14:34:39] scop: diamond makedb
+[14:34:39] scop: saber makedb
+[14:34:41] scop: v1.2 very-fast
+[14:34:58] scop: v1.2 fast
+[14:35:19] scop: v1.2 default
+[14:36:25] scop: v1.2 sensitive
+[14:37:39] scop: v1.2 more-sensitive
+[14:39:53] scop: v1.2 legacy
+[14:40:21] scop: v1.2 default with persistent index (--db, warm)
+[14:41:00] scop: diamond fast
+[14:41:05] scop: diamond default
+[14:41:14] scop: diamond mid-sensitive
+[14:41:37] scop: diamond sensitive
+[14:42:21] scop: diamond more-sensitive
+[14:43:09] scop: diamond very-sensitive
+[14:43:48] scop: diamond ultra-sensitive
+[14:46:02] scop: v1.1.0
+[14:48:14] scop: v1.0.2
+[14:58:08] scop: v1.2 exhaustive (1 rep)
+[15:05:32] === section decoy ===
+[15:21:06] === section env ===
+[15:21:07] === section rerun ===
+[15:23:59] === section mmseqs ===
+[15:23:59] mmseqs: exhaustive reference
+[15:34:55] mmseqs: database-size scaling
+[15:38:49] mmseqs: query-count scaling
+[16:10:43] === section env ===
+[16:10:44] === section scop ===
+[16:10:44] scop: diamond makedb
+[16:10:44] reused: diamond_makedb
+[16:10:44] scop: saber makedb
+[16:10:46] scop: v1.2 very-fast
+[16:11:00] scop: v1.2 fast
+[16:11:22] scop: v1.2 default
+[16:12:06] scop: v1.2 sensitive
+[16:12:59] scop: v1.2 more-sensitive
+[16:14:22] scop: v1.2 legacy
+[16:14:52] scop: v1.2 default with persistent index (--db, warm)
+[16:15:34] scop: diamond fast
+[16:15:34] reused: diamond_fast
+[16:15:34] scop: diamond default
+[16:15:34] reused: diamond_default
+[16:15:34] scop: diamond mid-sensitive
+[16:15:34] reused: diamond_mid-sensitive
+[16:15:34] scop: diamond sensitive
+[16:15:34] reused: diamond_sensitive
+[16:15:34] scop: diamond more-sensitive
+[16:15:34] reused: diamond_more-sensitive
+[16:15:34] scop: diamond very-sensitive
+[16:15:34] reused: diamond_very-sensitive
+[16:15:34] scop: diamond ultra-sensitive
+[16:15:34] reused: diamond_ultra-sensitive
+[16:15:34] scop: v1.1.0
+[16:15:34] reused: saber_v1.1.0
+[16:15:34] scop: v1.0.2
+[16:15:34] reused: saber_v1.0.2
+[16:16:34] reused: practical_saber_v1.1.0
+[16:16:34] reused: practical_diamond_default
+[16:16:34] reused: practical_diamond_very-sensitive
+[16:16:34] reused: practical_diamond_ultra-sensitive
+[16:16:34] scop: v1.2 exhaustive (1 rep)
+[16:24:32] === section decoy ===
+[16:24:33] reused: saber_v1.1.0_shuf
+[16:25:16] reused: diamond_default_shuf
+[16:25:16] reused: diamond_very-sensitive_shuf
+[16:25:16] reused: diamond_ultra-sensitive_shuf
+[16:25:16] reused: saber_v1.1.0_wshuf10
+[16:26:00] reused: diamond_default_wshuf10
+[16:26:00] reused: diamond_very-sensitive_wshuf10
+[16:26:00] reused: diamond_ultra-sensitive_wshuf10
+[16:26:00] === section mmseqs ===
+[16:26:00] mmseqs: exhaustive reference
+[16:32:11] reused: diamond_fast
+[16:32:11] reused: diamond_default
+[16:32:11] reused: diamond_mid-sensitive
+[16:32:12] reused: diamond_sensitive
+[16:32:12] reused: diamond_very-sensitive
+[16:32:12] reused: saber_v1.1.0
+[16:32:12] reused: saber_v1.0.2
+[16:32:12] mmseqs: database-size scaling
+[16:32:12] reused: scale_db25_saber_v1.1.0
+[16:32:15] reused: scale_db25_diamond_very-sensitive
+[16:32:16] reused: scale_db25_diamond_default
+[16:32:16] reused: scale_db50_saber_v1.1.0
+[16:32:22] reused: scale_db50_diamond_very-sensitive
+[16:32:22] reused: scale_db50_diamond_default
+[16:32:24] reused: scale_db400_saber_v1.1.0
+[16:47:36] === section env ===
+[16:47:37] === section scop ===
+[16:47:37] scop: diamond makedb
+[16:47:37] reused: diamond_makedb
+[16:47:37] scop: saber makedb
+[16:47:38] scop: v1.2 very-fast
+[16:47:53] scop: v1.2 fast
+[16:48:13] scop: v1.2 default
+[16:48:55] scop: v1.2 sensitive
+[16:49:45] scop: v1.2 more-sensitive
+[16:51:03] scop: v1.2 legacy
+[16:51:30] scop: v1.2 default with persistent index (--db, warm)
+[16:52:10] scop: diamond fast
+[16:52:10] reused: diamond_fast
+[16:52:10] scop: diamond default
+[16:52:10] reused: diamond_default
+[16:52:10] scop: diamond mid-sensitive
+[16:52:10] reused: diamond_mid-sensitive
+[16:52:10] scop: diamond sensitive
+[16:52:11] reused: diamond_sensitive
+[16:52:11] scop: diamond more-sensitive
+[16:52:11] reused: diamond_more-sensitive
+[16:52:11] scop: diamond very-sensitive
+[16:52:11] reused: diamond_very-sensitive
+[16:52:11] scop: diamond ultra-sensitive
+[16:52:11] reused: diamond_ultra-sensitive
+[16:52:11] scop: v1.1.0
+[16:52:11] reused: saber_v1.1.0
+[16:52:11] scop: v1.0.2
+[16:52:11] reused: saber_v1.0.2
+[16:53:04] reused: practical_saber_v1.1.0
+[16:53:04] reused: practical_diamond_default
+[16:53:04] reused: practical_diamond_very-sensitive
+[16:53:04] reused: practical_diamond_ultra-sensitive
+[16:53:04] scop: v1.2 exhaustive (1 rep)
+[17:00:28] === section decoy ===
+[17:00:28] reused: saber_v1.1.0_shuf
+[17:01:06] reused: diamond_default_shuf
+[17:01:06] reused: diamond_very-sensitive_shuf
+[17:01:06] reused: diamond_ultra-sensitive_shuf
+[17:01:06] reused: saber_v1.1.0_wshuf10
+[17:01:44] reused: diamond_default_wshuf10
+[17:01:44] reused: diamond_very-sensitive_wshuf10
+[17:01:44] reused: diamond_ultra-sensitive_wshuf10
+[17:01:44] === section mmseqs ===
+[17:01:45] mmseqs: exhaustive reference
+[17:07:21] reused: diamond_fast
+[17:07:21] reused: diamond_default
+[17:07:21] reused: diamond_mid-sensitive
+[17:07:21] reused: diamond_sensitive
+[17:07:21] reused: diamond_very-sensitive
+[17:07:21] reused: saber_v1.1.0
+[17:07:21] reused: saber_v1.0.2
+[17:07:21] mmseqs: database-size scaling
+[17:07:21] reused: scale_db25_saber_v1.1.0
+[17:07:25] reused: scale_db25_diamond_very-sensitive
+[17:07:25] reused: scale_db25_diamond_default
+[17:07:25] reused: scale_db50_saber_v1.1.0
+[17:07:30] reused: scale_db50_diamond_very-sensitive
+[17:07:31] reused: scale_db50_diamond_default
+[17:07:32] reused: scale_db400_saber_v1.1.0
+[17:08:06] reused: scale_db400_diamond_very-sensitive
+[17:08:06] reused: scale_db400_diamond_default
+[17:08:06] mmseqs: query-count scaling
+[17:08:06] reused: scaleq_50_saber_v1.1.0
+[17:08:09] reused: scaleq_50_diamond_very-sensitive
+[17:08:09] reused: scaleq_100_saber_v1.1.0
+[17:08:12] reused: scaleq_100_diamond_very-sensitive
+[17:08:38] mmseqs: long proteins (every 5th of the 494 sequences > 1,500 aa)
+[17:09:31] === section index ===
+[17:11:41] FAILED: makedb_saber_v1.2_mmseqs_DB_p16M (exit 1)
+[17:11:42] FAILED: db_order_query_mmseqs_DB (exit 1)
+[17:11:42] FAILED: db_order_partition_mmseqs_DB (exit 1)
+[17:17:49] FAILED: makedb_saber_v1.2_db400_p16M (exit 1)
+[17:17:49] FAILED: db_order_query_db400 (exit 1)
+[17:17:49] FAILED: db_order_partition_db400 (exit 1)
+[17:17:49] done
+[17:30:24] === section env ===
+[17:30:25] === section scop ===
+[17:30:25] scop: diamond makedb
+[17:30:25] reused: diamond_makedb
+[17:30:25] scop: saber makedb
+[17:30:26] scop: v1.2 very-fast
+[17:30:39] scop: v1.2 fast
+[17:30:59] scop: v1.2 default
+[17:31:37] scop: v1.2 sensitive
+[17:32:22] scop: v1.2 more-sensitive
+[17:33:35] scop: v1.2 legacy
+[17:34:02] scop: v1.2 default with persistent index (--db, warm)
+[17:34:40] scop: diamond fast
+[17:34:40] reused: diamond_fast
+[17:34:40] scop: diamond default
+[17:34:40] reused: diamond_default
+[17:34:40] scop: diamond mid-sensitive
+[17:34:40] reused: diamond_mid-sensitive
+[17:34:40] scop: diamond sensitive
+[17:34:40] reused: diamond_sensitive
+[17:34:40] scop: diamond more-sensitive
+[17:34:40] reused: diamond_more-sensitive
+[17:34:40] scop: diamond very-sensitive
+[17:34:40] reused: diamond_very-sensitive
+[17:34:40] scop: diamond ultra-sensitive
+[17:34:40] reused: diamond_ultra-sensitive
+[17:34:40] scop: v1.1.0
+[17:34:40] reused: saber_v1.1.0
+[17:34:40] scop: v1.0.2
+[17:34:40] reused: saber_v1.0.2
+[17:35:31] reused: practical_saber_v1.1.0
+[17:35:31] reused: practical_diamond_default
+[17:35:31] reused: practical_diamond_very-sensitive
+[17:35:31] reused: practical_diamond_ultra-sensitive
+[17:35:31] scop: v1.2 exhaustive (1 rep)
+[17:43:11] === section decoy ===
+[17:43:11] reused: saber_v1.1.0_shuf
+[17:43:50] reused: diamond_default_shuf
+[17:43:50] reused: diamond_very-sensitive_shuf
+[17:43:50] reused: diamond_ultra-sensitive_shuf
+[17:43:50] reused: saber_v1.1.0_wshuf10
+[17:44:33] reused: diamond_default_wshuf10
+[17:44:33] reused: diamond_very-sensitive_wshuf10
+[17:44:33] reused: diamond_ultra-sensitive_wshuf10
+[17:44:33] === section mmseqs ===
+[17:44:33] mmseqs: exhaustive reference
+[17:50:35] reused: diamond_fast
+[17:50:35] reused: diamond_default
+[17:50:35] reused: diamond_mid-sensitive
+[17:50:35] reused: diamond_sensitive
+[17:50:35] reused: diamond_very-sensitive
+[17:50:35] reused: saber_v1.1.0
+[17:50:35] reused: saber_v1.0.2
+[17:50:35] mmseqs: database-size scaling
+[17:50:35] reused: scale_db25_saber_v1.1.0
+[17:50:38] reused: scale_db25_diamond_very-sensitive
+[17:50:38] reused: scale_db25_diamond_default
+[17:50:39] reused: scale_db50_saber_v1.1.0
+[17:50:44] reused: scale_db50_diamond_very-sensitive
+[17:50:44] reused: scale_db50_diamond_default
+[17:50:46] reused: scale_db400_saber_v1.1.0
+[17:51:19] reused: scale_db400_diamond_very-sensitive
+[17:51:19] reused: scale_db400_diamond_default
+[17:51:19] mmseqs: query-count scaling
+[17:51:19] reused: scaleq_50_saber_v1.1.0
+[17:51:22] reused: scaleq_50_diamond_very-sensitive
+[17:51:22] reused: scaleq_100_saber_v1.1.0
+[17:51:26] reused: scaleq_100_diamond_very-sensitive
+[17:51:26] reused: scaleq_250_saber_v1.1.0
+[17:51:31] reused: scaleq_250_diamond_very-sensitive
+[17:51:31] mmseqs: long proteins (every 5th of the 494 sequences > 1,500 aa)
+[17:51:31] reused: long_saber_v1.1.0
+[17:51:43] reused: long_diamond_very-sensitive
+[17:51:43] === section index ===
+[17:51:50] reused: makedb_diamond_mmseqs_DB
+[17:51:50] reused: makedb_saber_v1.1.0_mmseqs_DB
+[18:02:12] === section index ===
+[18:02:18] reused: makedb_diamond_mmseqs_DB
+[18:02:18] reused: makedb_saber_v1.1.0_mmseqs_DB
+[18:02:41] reused: db_warm_diamond_very-sensitive_mmseqs_DB
+[18:02:49] reused: db_cold_diamond_very-sensitive_mmseqs_DB
+[18:02:57] reused: db_cold_diamond_very-sensitive_mmseqs_DB
+[18:03:04] reused: db_cold_diamond_very-sensitive_mmseqs_DB
+[18:03:44] reused: makedb_diamond_db400
+[18:03:44] reused: makedb_saber_v1.1.0_db400
+[18:05:03] reused: db_warm_diamond_very-sensitive_db400
+[18:05:28] reused: db_cold_diamond_very-sensitive_db400
+[18:05:54] reused: db_cold_diamond_very-sensitive_db400
+[18:06:19] reused: db_cold_diamond_very-sensitive_db400
+[18:07:13] === section extra ===
+[18:07:50] === section translated ===
+[20:10:41] === section env ===
+[20:10:41] === section scop ===
+[20:10:41] scop: diamond makedb
+[20:10:41] reused: diamond_makedb
+[20:10:41] scop: saber makedb
+[20:10:42] scop: v1.2 very-fast
+[20:10:55] scop: v1.2 fast
+[20:11:12] scop: v1.2 default
+[20:11:43] scop: v1.2 sensitive
+[20:12:22] scop: v1.2 more-sensitive
+[20:13:23] scop: v1.2 legacy
+[20:13:48] scop: v1.2 default with persistent index (--db, warm)
+[20:14:15] scop: diamond fast
+[20:14:15] reused: diamond_fast
+[20:14:15] scop: diamond default
+[20:14:15] reused: diamond_default
+[20:14:15] scop: diamond mid-sensitive
+[20:14:15] reused: diamond_mid-sensitive
+[20:14:15] scop: diamond sensitive
+[20:14:16] reused: diamond_sensitive
+[20:14:16] scop: diamond more-sensitive
+[20:14:16] reused: diamond_more-sensitive
+[20:14:16] scop: diamond very-sensitive
+[20:14:16] reused: diamond_very-sensitive
+[20:14:16] scop: diamond ultra-sensitive
+[20:14:16] reused: diamond_ultra-sensitive
+[20:14:16] scop: v1.1.0
+[20:14:16] reused: saber_v1.1.0
+[20:14:16] scop: v1.0.2
+[20:14:16] reused: saber_v1.0.2
+[20:14:56] reused: practical_saber_v1.1.0
+[20:14:56] reused: practical_diamond_default
+[20:14:57] reused: practical_diamond_very-sensitive
+[20:14:57] reused: practical_diamond_ultra-sensitive
+[20:14:57] scop: v1.2 exhaustive (1 rep)
+[20:21:51] === section decoy ===
+[20:21:51] reused: saber_v1.1.0_shuf
+[20:22:21] reused: diamond_default_shuf
+[20:22:21] reused: diamond_very-sensitive_shuf
+[20:22:21] reused: diamond_ultra-sensitive_shuf
+[20:22:22] reused: saber_v1.1.0_wshuf10
+[20:22:52] reused: diamond_default_wshuf10
+[20:22:52] reused: diamond_very-sensitive_wshuf10
+[20:22:52] reused: diamond_ultra-sensitive_wshuf10
+[20:22:52] === section mmseqs ===
+[20:22:53] mmseqs: exhaustive reference
+[20:27:46] reused: diamond_fast
+[20:27:47] reused: diamond_default
+[20:27:47] reused: diamond_mid-sensitive
+[20:27:47] reused: diamond_sensitive
+[20:27:47] reused: diamond_very-sensitive
+[20:27:47] reused: saber_v1.1.0
+[20:27:47] reused: saber_v1.0.2
+[20:27:47] mmseqs: database-size scaling
+[20:27:47] reused: scale_db25_saber_v1.1.0
+[20:27:50] reused: scale_db25_diamond_very-sensitive
+[20:27:50] reused: scale_db25_diamond_default
+[20:27:50] reused: scale_db50_saber_v1.1.0
+[20:27:55] reused: scale_db50_diamond_very-sensitive
+[20:27:55] reused: scale_db50_diamond_default
+[20:27:56] reused: scale_db400_saber_v1.1.0
+[20:28:23] reused: scale_db400_diamond_very-sensitive
+[20:28:23] reused: scale_db400_diamond_default
+[20:28:23] mmseqs: query-count scaling
+[20:28:23] reused: scaleq_50_saber_v1.1.0
+[20:28:25] reused: scaleq_50_diamond_very-sensitive
+[20:28:25] reused: scaleq_100_saber_v1.1.0
+[20:28:28] reused: scaleq_100_diamond_very-sensitive
+[20:28:28] reused: scaleq_250_saber_v1.1.0
+[20:28:33] reused: scaleq_250_diamond_very-sensitive
+[20:28:33] mmseqs: long proteins (every 5th of the 494 sequences > 1,500 aa)
+[20:28:33] reused: long_saber_v1.1.0
+[20:28:41] reused: long_diamond_very-sensitive
+[20:28:41] === section index ===
+[20:28:47] reused: makedb_diamond_mmseqs_DB
+[20:28:47] reused: makedb_saber_v1.1.0_mmseqs_DB
+[20:29:06] reused: db_warm_diamond_very-sensitive_mmseqs_DB
+[20:29:12] reused: db_cold_diamond_very-sensitive_mmseqs_DB
+[20:29:18] reused: db_cold_diamond_very-sensitive_mmseqs_DB
+[20:29:24] reused: db_cold_diamond_very-sensitive_mmseqs_DB
+[20:29:26] reused: db_order_query_mmseqs_DB
+[20:29:26] reused: db_order_partition_mmseqs_DB
+[20:29:50] reused: makedb_diamond_db400
+[20:29:50] reused: makedb_saber_v1.1.0_db400
+[20:30:54] reused: db_warm_diamond_very-sensitive_db400
+[20:31:14] reused: db_cold_diamond_very-sensitive_db400
+[20:31:35] reused: db_cold_diamond_very-sensitive_db400
+[20:31:56] reused: db_cold_diamond_very-sensitive_db400
+[20:32:04] reused: db_order_query_db400
+[20:32:04] reused: db_order_partition_db400
+[20:32:04] === section extra ===
+[20:32:36] done
+[20:33:15] === section index ===
+[20:33:21] reused: makedb_diamond_mmseqs_DB
+[20:33:21] reused: makedb_saber_v1.1.0_mmseqs_DB
+[20:33:40] reused: db_warm_diamond_very-sensitive_mmseqs_DB
+[20:33:46] reused: db_cold_diamond_very-sensitive_mmseqs_DB
+[20:33:53] reused: db_cold_diamond_very-sensitive_mmseqs_DB
+[20:33:59] reused: db_cold_diamond_very-sensitive_mmseqs_DB
+[20:34:36] reused: makedb_diamond_db400
+[20:34:36] reused: makedb_saber_v1.1.0_db400
+[20:35:39] reused: db_warm_diamond_very-sensitive_db400
+[20:36:00] reused: db_cold_diamond_very-sensitive_db400
+[20:36:21] reused: db_cold_diamond_very-sensitive_db400
+[20:36:42] reused: db_cold_diamond_very-sensitive_db400
+[20:37:29] === section translated ===
+[20:39:26] reused: nx_diamond_default
+[20:39:26] reused: nx_diamond_very-sensitive
+[20:39:26] reused: nx_diamond_ultra-sensitive
+[21:18:28] === section translated ===
+[21:19:46] reused: nx_diamond_default
+[21:19:47] reused: nx_diamond_very-sensitive
+[21:19:47] reused: nx_diamond_ultra-sensitive
+[21:19:47] reused: nxsub_saber_v1.1.0
+[21:19:47] reused: nxsub_diamond_very-sensitive
+[21:32:02] done
+[21:32:22] === section multi ===
+[21:32:47] === section threads ===
+[21:36:41] === section sweep ===
+[21:38:59] done
+[21:39:24] === section translated ===
+[21:47:17] === section translated ===
+[21:47:43] === section translated ===
+[22:08:59] === section lowc ===
+[22:11:39] FAILED: lowc10_saber_v1.1.0 (exit 250)
+[22:12:14] FAILED: lowc_saber_v1.1.0 (exit 250)
+[22:18:50] FAILED: lowc_saber_v1.0.2 (exit 250)
+[22:19:34] done
+[22:20:21] === section env ===
+[22:20:30] done

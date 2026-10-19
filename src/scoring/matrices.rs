@@ -78,6 +78,18 @@ impl ScoreMatrix {
         Self { matrix, system, char_to_idx: BLOSUM_CHAR_MAP }
     }
 
+    /// Nucleotide match/mismatch matrix in the 24×24 layout used by every
+    /// kernel: codes 0..=3 are A, C, G, T; code 4 (N) and all others score
+    /// `mismatch` against everything. `system` is not meaningful for such a
+    /// matrix and is left at BLOSUM62.
+    pub fn nucleotide(match_score: i32, mismatch: i32) -> Self {
+        let mut matrix = [[mismatch; 24]; 24];
+        for (i, row) in matrix.iter_mut().enumerate().take(4) {
+            row[i] = match_score;
+        }
+        Self { matrix, system: ScoringSystem::Blosum62, char_to_idx: BLOSUM_CHAR_MAP }
+    }
+
     /// Score one amino acid pair. Case-insensitive; unknown letters map to `X`.
     #[inline]
     pub fn score(&self, a1: u8, a2: u8) -> i32 {

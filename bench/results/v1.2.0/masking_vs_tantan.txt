@@ -1,0 +1,6 @@
+input: first 3,000 records of scop40.fa + mmseqs_QUERY.fasta (3500 sequences; see bench/scripts/validate_masking.sh)
+reference: tantan 49 -p -f 1
+saber: examples/mask_probs (lambda = 0.32403216734804396)
+positions=764596 masked_ref=21556 (2.819%) masked_test=21550 (2.818%)
+call agreement=0.99998 both=21546 ref_only=10 test_only=4 jaccard=0.9994
+pearson r=0.99994 mean|diff|=0.00033

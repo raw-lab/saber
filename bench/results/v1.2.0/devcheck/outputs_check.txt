@@ -1,0 +1,9 @@
+SCOP40 very-fast: 36311 vs 36311 lines; pairs only in first 0, only in second 0; 6 common pairs differ (6 with the same E-value and bit score, 0 higher / 0 lower bit score in the second); columns that change: pident 6, length 6, mismatch 6, qstart 3, sstart 3, gapopen 3, qend 1, send 1
+SCOP40 default: 80652 vs 80652 lines; pairs only in first 0, only in second 0; 6 common pairs differ (6 with the same E-value and bit score, 0 higher / 0 lower bit score in the second); columns that change: pident 6, length 6, mismatch 6, qstart 4, sstart 4, gapopen 3, qend 2, send 2
+SCOP40 more-sensitive: 106215 vs 106215 lines; pairs only in first 0, only in second 0; 6 common pairs differ (6 with the same E-value and bit score, 0 higher / 0 lower bit score in the second); columns that change: pident 6, length 6, mismatch 6, qstart 4, sstart 4, gapopen 3, qend 2, send 2
+MMseqs2 example default: identical (15607 lines)
+blastx default: 115378 vs 115378 lines; pairs only in first 0, only in second 0; 7 common pairs differ (7 with the same E-value and bit score, 0 higher / 0 lower bit score in the second); columns that change: pident 7, length 7, mismatch 7, gapopen 4, qstart 4, sstart 4, qend 3, send 2
+long proteins, benchmarked build: 4712 vs 4712 lines; pairs only in first 0, only in second 0; 11 common pairs differ (2 with the same E-value and bit score, 0 higher / 9 lower bit score in the second); columns that change: pident 11, length 11, mismatch 11, qstart 11, qend 11, sstart 11, gapopen 9, send 9, evalue 9, bitscore 9
+long proteins, delivered build: 4712 vs 4712 lines; pairs only in first 0, only in second 0; 2 common pairs differ (2 with the same E-value and bit score, 0 higher / 0 lower bit score in the second); columns that change: pident 2, length 2, mismatch 2, qstart 2, qend 2, sstart 2, send 2, gapopen 1
+SCOP40 default, NEW re-run: identical (80652 lines)
+blastx default, NEW re-run: identical (115378 lines)

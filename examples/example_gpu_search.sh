@@ -1,154 +1,35 @@
-#!/bin/bash
-# Example: GPU-Accelerated Search
-# Demonstrates SABER with GPU acceleration for maximum performance
-# on large-scale searches
+#!/usr/bin/env bash
+# GPU scoring of candidate windows (experimental).
+#
+# The GPU backend is compiled only with `cargo build --release --features gpu-cuda`
+# and needs a CUDA device at run time. Without either, `--gpu` prints a notice and
+# uses the CPU kernels, so this script runs on any machine. The CUDA kernel was
+# checked in emulation only; it has not been run on GPU hardware for this release
+# (docs/LIMITATIONS.md), so compare its output with the CPU run (step 3) and run
+# `saber --doctor --gpu` on a GPU machine.
+#
+# Run from anywhere after building.
+#   SABER=/path/to/saber   use another binary (default: ./target/release/saber)
+#   OUT=/some/dir          keep the outputs there (default: a new temporary directory)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+SABER="${SABER:-./target/release/saber}"
+OUT="${OUT:-$(mktemp -d)}"
+mkdir -p "$OUT"
+Q=examples/protein_query.fa
+DB=examples/protein_db.fa
+[ -x "$SABER" ] || { echo "saber not found at $SABER (run: cargo build --release [--features gpu-cuda])" >&2; exit 1; }
+echo "outputs: $OUT"
 
-set -e
+echo "== 1. diagnostics: SIMD support, kernel self-tests and GPU backend status"
+"$SABER" --doctor | grep -E 'AVX2|GPU|Summary|Result' || true
 
-SABER="./target/release/saber"
-QUERIES="examples/data/large_query_set.fasta"
-DATABASE="examples/data/large_database.fasta"
+echo "== 2. search with --gpu (falls back to the CPU kernels when no backend is available)"
+"$SABER" -q "$Q" -d "$DB" --gpu -o "$OUT/pp_gpu.m8"
 
-echo "================================================"
-echo "SABER Example: GPU-Accelerated Search"
-echo "================================================"
+echo "== 3. the same search on the CPU; outputs must match"
+"$SABER" -q "$Q" -d "$DB" -o "$OUT/pp_cpu.m8"
+cmp "$OUT/pp_gpu.m8" "$OUT/pp_cpu.m8" && echo "GPU-path and CPU outputs are identical"
+cat "$OUT/pp_cpu.m8"
 
-# Check GPU availability
-echo "Checking GPU availability..."
-if $SABER --gpu-info 2>/dev/null; then
-    echo "✓ GPU detected and ready"
-else
-    echo "⚠ No GPU detected, falling back to CPU"
-    CPU_ONLY=true
-fi
-
-echo ""
-
-# GPU-accelerated search with auto thread optimization
-if [ -z "$CPU_ONLY" ]; then
-    echo "Running GPU-accelerated search..."
-    $SABER \
-        -i "$QUERIES" \
-        -d "$DATABASE" \
-        -m BLOSUM_62 \
-        -o results_gpu.m8 \
-        --outfmt m8 \
-        --gpu \
-        --gpu-device 0 \
-        -t auto \
-        --verbose
-
-    echo "Results saved to: results_gpu.m8"
-    echo ""
-
-    # Multi-GPU search (if available)
-    echo "Running multi-GPU search (if dual GPU system)..."
-    $SABER \
-        -i "$QUERIES" \
-        -d "$DATABASE" \
-        -m BLOSUM_62 \
-        -o results_multi_gpu.m8 \
-        --outfmt m8 \
-        --gpu \
-        --gpu-device 0,1 \
-        -t auto 2>/dev/null || echo "Single GPU available, skipping multi-GPU test"
-
-    echo ""
-
-    # Comparison: GPU vs CPU
-    echo "Running CPU-only search for comparison..."
-    /usr/bin/time -v $SABER \
-        -i "$QUERIES" \
-        -d "$DATABASE" \
-        -m BLOSUM_62 \
-        -o results_cpu.m8 \
-        --outfmt m8 \
-        -t auto
-
-    echo ""
-    echo "GPU vs CPU performance comparison:"
-    echo "Check timing information above for memory and execution time"
-
-else
-    echo "Running CPU-only search..."
-    $SABER \
-        -i "$QUERIES" \
-        -d "$DATABASE" \
-        -m BLOSUM_62 \
-        -o results_cpu.m8 \
-        --outfmt m8 \
-        -t auto
-
-    echo "Results saved to: results_cpu.m8"
-fi
-
-echo ""
-
-# Large-scale batch processing with progress tracking
-echo "Running large-scale batch search with progress..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    -m BLOSUM_62 \
-    -c 100000 \
-    -o results_batch.m8 \
-    --outfmt m8 \
-    --gpu \
-    -t auto \
-    --verbose
-
-echo ""
-echo "Results saved to: results_batch.m8"
-
-# Memory-efficient search with streaming
-echo ""
-echo "Running memory-efficient search (streaming mode)..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    -m BLOSUM_62 \
-    --streaming \
-    -o results_streaming.m8 \
-    --outfmt m8 \
-    --gpu
-
-echo "Results saved to: results_streaming.m8"
-
-# Profile performance
-echo ""
-echo "Running with performance profiling..."
-if command -v perf &> /dev/null; then
-    perf stat -e cycles,instructions,cache-references,cache-misses,branches,branch-misses \
-        $SABER \
-        -i "$QUERIES" \
-        -d "$DATABASE" \
-        -m BLOSUM_62 \
-        --gpu \
-        -o results_profiled.m8 \
-        --outfmt m8
-else
-    echo "perf not available, running without profiling"
-    $SABER \
-        -i "$QUERIES" \
-        -d "$DATABASE" \
-        -m BLOSUM_62 \
-        --gpu \
-        -o results_profiled.m8 \
-        --outfmt m8
-fi
-
-echo ""
-echo "================================================"
-echo "GPU acceleration examples completed!"
-echo "================================================"
-
-# Summary
-echo ""
-echo "Summary of GPU features demonstrated:"
-echo "  ✓ GPU detection and initialization"
-echo "  ✓ Single GPU acceleration"
-echo "  ✓ Multi-GPU support"
-echo "  ✓ GPU vs CPU performance comparison"
-echo "  ✓ Batch processing optimization"
-echo "  ✓ Memory-efficient streaming mode"
-echo "  ✓ Performance profiling"
+echo "done: $OUT"

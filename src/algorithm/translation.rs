@@ -21,9 +21,15 @@ pub enum TranslationTable {
     Invertebrate,
     Ciliate,
     Echinoderm,
+    /// Bacterial, archaeal and plant plastid code (NCBI 11).
     Bacterial,
     AltYeast,
+    /// Archaea use NCBI table 11, so this translates exactly like
+    /// [`TranslationTable::Bacterial`]. (SABER 1.0/1.1 mapped `archaeal` to
+    /// NCBI table 15, the Blepharisma nuclear code, which reads TAG as Q.)
     Archaeal,
+    /// Blepharisma nuclear code (NCBI 15): TAG = Q.
+    Blepharisma,
 }
 
 impl std::str::FromStr for TranslationTable {
@@ -40,7 +46,8 @@ impl std::str::FromStr for TranslationTable {
             "echinoderm" | "9" => Ok(Self::Echinoderm),
             "bacterial" | "11" => Ok(Self::Bacterial),
             "alt-yeast" | "altyeast" | "12" => Ok(Self::AltYeast),
-            "archaeal" | "15" => Ok(Self::Archaeal),
+            "archaeal" => Ok(Self::Archaeal),
+            "blepharisma" | "15" => Ok(Self::Blepharisma),
             _ => Err(format!("Unknown genetic code: {}", s)),
         }
     }
@@ -142,9 +149,9 @@ fn genetic_code(table: TranslationTable) -> &'static HashMap<&'static str, char>
         TranslationTable::Invertebrate => &INVERTEBRATE_MITOCHONDRIAL,
         TranslationTable::Ciliate => &CILIATE_NUCLEAR,
         TranslationTable::Echinoderm => &ECHINODERM_MITOCHONDRIAL,
-        TranslationTable::Bacterial => &BACTERIAL_CODE,
+        TranslationTable::Bacterial | TranslationTable::Archaeal => &BACTERIAL_CODE,
         TranslationTable::AltYeast => &ALTERNATIVE_YEAST,
-        TranslationTable::Archaeal => &ARCHAEAL_CODE,
+        TranslationTable::Blepharisma => &BLEPHARISMA_NUCLEAR,
     }
 }
 
@@ -227,17 +234,132 @@ lazy_static::lazy_static! {
         m
     };
 
-    /// Archaeal (NCBI 15): TAG = Q.
-    static ref ARCHAEAL_CODE: HashMap<&'static str, char> = {
+    /// Blepharisma nuclear (NCBI 15): TAG = Q.
+    static ref BLEPHARISMA_NUCLEAR: HashMap<&'static str, char> = {
         let mut m = STANDARD_GENETIC_CODE.clone();
         m.insert("TAG", 'Q');
         m
     };
 }
 
+/// Table-driven translator (64-entry codon table per genetic code) producing
+/// protein *codes* directly. Codons containing anything but A/C/G/T/U give X.
+#[derive(Clone)]
+pub struct CodonTable {
+    aa: [u8; 64],
+    table: TranslationTable,
+}
+
+impl CodonTable {
+    pub fn new(table: TranslationTable) -> Self {
+        let codes = genetic_code(table);
+        let mut aa = [crate::alphabet::AA_X; 64];
+        let nts = [b'A', b'C', b'G', b'T'];
+        for a in 0..4 {
+            for b in 0..4 {
+                for c in 0..4 {
+                    let codon = [nts[a], nts[b], nts[c]];
+                    let ch = lookup_codon(&codon, codes) as u8;
+                    aa[a * 16 + b * 4 + c] = crate::alphabet::encode_protein_byte(ch);
+                }
+            }
+        }
+        Self { aa, table }
+    }
+
+    pub fn genetic_code(&self) -> TranslationTable {
+        self.table
+    }
+
+    /// Translate frame `frame` (0..=5; 3..=5 on the reverse complement) of a
+    /// nucleotide sequence given as *nucleotide codes* (0..=3, 4 = N) into
+    /// protein codes appended to `out` (cleared first).
+    pub fn translate_codes(&self, nt: &[u8], frame: usize, out: &mut Vec<u8>) {
+        out.clear();
+        let n = nt.len();
+        if frame < 3 {
+            let mut i = frame;
+            while i + 3 <= n {
+                out.push(self.codon(nt[i], nt[i + 1], nt[i + 2]));
+                i += 3;
+            }
+        } else {
+            // reverse complement read right-to-left: complement of code c is 3-c
+            let off = frame - 3;
+            let mut k = off;
+            while k + 3 <= n {
+                let a = nt[n - 1 - k];
+                let b = nt[n - 2 - k];
+                let c = nt[n - 3 - k];
+                out.push(self.codon(comp(a), comp(b), comp(c)));
+                k += 3;
+            }
+        }
+    }
+
+    #[inline]
+    fn codon(&self, a: u8, b: u8, c: u8) -> u8 {
+        if a > 3 || b > 3 || c > 3 {
+            crate::alphabet::AA_X
+        } else {
+            self.aa[(a as usize) * 16 + (b as usize) * 4 + c as usize]
+        }
+    }
+}
+
+#[inline]
+fn comp(c: u8) -> u8 {
+    if c > 3 { c } else { 3 - c }
+}
+
+/// Signed frame label (+1..+3 forward, -1..-3 reverse) for frame 0..=5.
+pub fn frame_label(frame: usize) -> i8 {
+    if frame < 3 { frame as i8 + 1 } else { -((frame - 3) as i8 + 1) }
+}
+
+/// Map 1-based inclusive protein coordinates of `frame` back to 1-based
+/// nucleotide coordinates on the original strand. Minus-strand hits are
+/// reported BLAST-style with start > end.
+pub fn protein_to_nt(frame: usize, p_start: usize, p_end: usize, nt_len: usize) -> (usize, usize) {
+    if frame < 3 {
+        let s = frame + 3 * (p_start - 1) + 1;
+        let e = frame + 3 * p_end;
+        (s, e)
+    } else {
+        let off = frame - 3;
+        let rs = off + 3 * (p_start - 1) + 1; // on the reverse complement
+        let re = off + 3 * p_end;
+        (nt_len - rs + 1, nt_len - re + 1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codon_table_matches_hashmap_translation_on_all_frames() {
+        let seq = b"ATGGCGTTTAAACCCGGGTTTAAATAGCGNATGCATGCTAGCTAGGATCCAAGCTTGAATTC";
+        let codes = crate::alphabet::encode_nucleotide(seq);
+        let ct = CodonTable::new(TranslationTable::Standard);
+        let mut out = Vec::new();
+        for f in translate_six_frames(seq, TranslationTable::Standard) {
+            ct.translate_codes(&codes, f.frame as usize, &mut out);
+            let want = crate::alphabet::EncodedProtein::from_ascii(f.protein.as_bytes());
+            assert_eq!(out, want.as_slice(), "frame {}", f.frame);
+        }
+    }
+
+    #[test]
+    fn protein_to_nt_coordinates() {
+        // forward frame +2: protein residue 1 = nt 2..4
+        assert_eq!(protein_to_nt(1, 1, 1, 30), (2, 4));
+        // reverse frame -1 (index 3): protein residue 1 = last codon, reported 30..28
+        assert_eq!(protein_to_nt(3, 1, 1, 30), (30, 28));
+        assert_eq!(protein_to_nt(4, 2, 3, 30), (26, 21));
+        assert_eq!(frame_label(0), 1);
+        assert_eq!(frame_label(5), -3);
+    }
 
     #[test]
     fn reverse_complement_atcg() {
@@ -283,5 +405,22 @@ mod tests {
     fn genetic_code_parsing_accepts_numbers() {
         assert_eq!("11".parse::<TranslationTable>().unwrap(), TranslationTable::Bacterial);
         assert_eq!("standard".parse::<TranslationTable>().unwrap(), TranslationTable::Standard);
+    }
+
+    #[test]
+    fn archaeal_uses_table_11_and_table_15_is_blepharisma() {
+        // 1.0/1.1 mapped "archaeal" to NCBI 15 (TAG = Q); archaea use table 11.
+        assert_eq!("archaeal".parse::<TranslationTable>().unwrap(), TranslationTable::Archaeal);
+        assert_eq!("15".parse::<TranslationTable>().unwrap(), TranslationTable::Blepharisma);
+        assert_eq!("blepharisma".parse::<TranslationTable>().unwrap(), TranslationTable::Blepharisma);
+        let tag = b"ATGTAGTGG";
+        assert_eq!(translate_frame(tag, TranslationTable::Archaeal, 0), translate_frame(tag, TranslationTable::Bacterial, 0));
+        assert_eq!(translate_frame(tag, TranslationTable::Archaeal, 0), "M*W");
+        assert_eq!(translate_frame(tag, TranslationTable::Blepharisma, 0), "MQW");
+        let codes: Vec<u8> = tag.iter().map(|&b| match b { b'A' => 0, b'C' => 1, b'G' => 2, _ => 3 }).collect();
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        CodonTable::new(TranslationTable::Archaeal).translate_codes(&codes, 0, &mut a);
+        CodonTable::new(TranslationTable::Bacterial).translate_codes(&codes, 0, &mut b);
+        assert_eq!(a, b);
     }
 }

@@ -1,0 +1,7 @@
+scop/diamond_very-sensitive: output identical
+scop/saber_v1.2_default: output identical
+mmseqs/diamond_very-sensitive: output identical
+mmseqs/saber_v1.2_default: output identical
+mmseqs/saber_v1.2_default_db: output identical
+mmseqs/long_diamond_very-sensitive: output identical
+mmseqs/long_saber_v1.2_default: output DIFFERENT

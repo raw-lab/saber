@@ -1,133 +1,40 @@
-#!/bin/bash
-# Example: Translated Nucleotide-to-Protein Search (N-P mode)
-# Search DNA/RNA sequences against protein databases
-# with automatic 6-frame translation
+#!/usr/bin/env bash
+# Translated searches on the bundled example data:
+#   --mode nx  nucleotide queries vs a protein database (blastx-like, six frames)
+#   --mode pn  protein queries vs a nucleotide database (tblastn-like, six frames)
+#
+# Run from anywhere after `cargo build --release`.
+#   SABER=/path/to/saber   use another binary (default: ./target/release/saber)
+#   OUT=/some/dir          keep the outputs there (default: a new temporary directory)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+SABER="${SABER:-./target/release/saber}"
+OUT="${OUT:-$(mktemp -d)}"
+mkdir -p "$OUT"
+[ -x "$SABER" ] || { echo "saber not found at $SABER (run: cargo build --release)" >&2; exit 1; }
+echo "outputs: $OUT"
 
-set -e
+echo "== 1. blastx-like: DNA queries vs proteins (standard genetic code)"
+"$SABER" --mode nx -q examples/nucleotide_query.fa -d examples/protein_db.fa -o "$OUT/nx.m8"
+cat "$OUT/nx.m8"
+# The query name carries the frame (|frame+1 ... |frame-3); query coordinates
+# are in nucleotides, subject coordinates in residues.
 
-SABER="./target/release/saber"
-QUERIES="examples/data/cds.fasta"  # Coding sequences
-DATABASE="examples/data/proteins.fasta"  # Protein database
+echo "== 2. the same with the bacterial/plastid code (NCBI table 11); names or numbers work"
+"$SABER" --mode nx --genetic-code 11 -q examples/nucleotide_query.fa -d examples/protein_db.fa -o "$OUT/nx_table11.m8"
+cat "$OUT/nx_table11.m8"
 
-echo "================================================"
-echo "SABER Example: Translated Nucleotide-to-Protein"
-echo "================================================"
+echo "== 3. vertebrate mitochondrial code (table 2): TGA = W, AGA/AGG = stop, ATA = M"
+"$SABER" --mode nx --genetic-code vertebrate -q examples/nucleotide_query.fa -d examples/protein_db.fa -o "$OUT/nx_table2.m8"
+cat "$OUT/nx_table2.m8"
 
-# Standard translated search with standard genetic code
-echo "Running translated search (standard genetic code)..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    --mode nx \
-    --genetic-code standard \
-    -m BLOSUM_62 \
-    -g 10 \
-    -e 1 \
-    -v 1e-10 \
-    -a 10 \
-    -o results_nx_standard.m8 \
-    --outfmt m8 \
-    -t auto \
-    --verbose
+echo "== 4. tblastn-like: proteins vs a DNA database"
+"$SABER" --mode pn -q examples/protein_query.fa -d examples/nucleotide_db.fa -o "$OUT/pn.m8"
+cat "$OUT/pn.m8"
 
-echo "Results saved to: results_nx_standard.m8"
-head -5 results_nx_standard.m8
+echo "== 5. translated persistent index (built with the same --mode)"
+"$SABER" --mode pn --makedb "$OUT/nucleotide_db.pn.sdx" -d examples/nucleotide_db.fa
+"$SABER" --mode pn -q examples/protein_query.fa --db "$OUT/nucleotide_db.pn.sdx" -o "$OUT/pn_db.m8"
+cmp "$OUT/pn.m8" "$OUT/pn_db.m8" && echo "indexed search output is identical to the in-memory search"
 
-# Search with bacterial genetic code
-echo ""
-echo "Running with bacterial genetic code..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    --mode nx \
-    --genetic-code bacterial \
-    -m BLOSUM_62 \
-    -v 1e-10 \
-    -o results_nx_bacterial.m8 \
-    --outfmt m8
-
-echo "Results saved to: results_nx_bacterial.m8"
-
-# Mitochondrial genetic code (vertebrate)
-echo ""
-echo "Running with vertebrate mitochondrial genetic code..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    --mode nx \
-    --genetic-code vertebrate \
-    -m BLOSUM_62 \
-    -v 1e-8 \
-    -a 5 \
-    -o results_nx_vertebrate.m8 \
-    --outfmt m8
-
-echo "Results saved to: results_nx_vertebrate.m8"
-
-# Ciliate genetic code (different stop codon usage)
-echo ""
-echo "Running with ciliate nuclear genetic code..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    --mode nx \
-    --genetic-code ciliate \
-    -m BLOSUM_62 \
-    -o results_nx_ciliate.m8 \
-    --outfmt m8
-
-echo "Results saved to: results_nx_ciliate.m8"
-
-# Sensitive search with multiple genetic codes comparison
-echo ""
-echo "Running sensitive comparison search..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    --mode nx \
-    --genetic-code archaeal \
-    -m BLOSUM_45 \
-    -v 1e-15 \
-    -a 3 \
-    -o results_nx_archaeal.m8 \
-    --outfmt m8
-
-echo "Results saved to: results_nx_archaeal.m8"
-
-# JSON output for programmatic frame-wise analysis
-echo ""
-echo "Running with JSON output for detailed analysis..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    --mode nx \
-    --genetic-code standard \
-    -o results_nx.json \
-    --outfmt json \
-    -a 10
-
-echo "JSON results saved to: results_nx.json"
-
-# Protein-to-Translated Nucleotide (reverse search)
-echo ""
-echo "Running reverse search (protein to translated DNA)..."
-$SABER \
-    -i "$DATABASE" \
-    -d "$QUERIES" \
-    --mode pn \
-    --genetic-code standard \
-    -m BLOSUM_62 \
-    -v 1e-10 \
-    -o results_pn.m8 \
-    --outfmt m8
-
-echo "Reverse search results saved to: results_pn.m8"
-
-echo ""
-echo "================================================"
-echo "Examples completed successfully!"
-echo "================================================"
-echo ""
-echo "Note: The 6-frame translation is performed automatically"
-echo "for all sequences in the query file. Results will show"
-echo "the highest-scoring frame for each query-subject pair."
+echo "done: $OUT"

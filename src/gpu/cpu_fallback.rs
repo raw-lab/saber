@@ -1,26 +1,56 @@
-//! CPU executor — SIMD score-only + CPU traceback on top hits.
+//! CPU implementation of [`ScoreBackend`] (AVX2 inter-sequence kernel with
+//! exact i32 fallback), plus the legacy [`CpuExecutor`].
 //!
-//! Implements [`GpuExecutor`] without a GPU. Uses AVX2 SIMD for the
-//! score-only kernel (16 subjects in parallel per register, ~65× faster
-//! than scalar SW on this machine), then performs CPU traceback only for
-//! score-only consumers; full [`AlignmentResult`] traceback is the caller's
-//! job in the main pipeline.
-//!
-//! Scores returned here are bit-for-bit identical to the scalar
-//! [`SmithWaterman`] kernel — verified by the
-//! `sw_simd::tests::simd_matches_scalar_*` tests.
+//! This is what `--gpu` uses when no CUDA device is available, and it is the
+//! reference the CUDA backend must match bit for bit.
 
-use rayon::prelude::*;
+use std::cell::RefCell;
+use std::sync::Arc;
 
-use crate::algorithm::{sw_simd_protein_batch, Scoring, SmithWaterman};
+use crate::algorithm::sw_simd::{score_many, KernelCounters, SimdScratch};
+use crate::alphabet::ProteinCodes;
+use crate::scoring::stats::GapCosts;
 
-use super::{GpuExecutor, GpuScore};
+use super::{BackendExecutor, GpuExecutor, GpuScore, ScoreBackend};
 
-pub struct CpuExecutor;
+thread_local! {
+    static SCRATCH: RefCell<SimdScratch> = RefCell::new(SimdScratch::new());
+}
+
+/// Exact CPU score backend.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CpuBackend;
+
+impl ScoreBackend for CpuBackend {
+    fn name(&self) -> &str {
+        "cpu-simd"
+    }
+
+    fn score_windows(
+        &self,
+        query: &[u8],
+        bias: Option<&[i8]>,
+        windows: &[&[u8]],
+        matrix: &[[i32; 24]; 24],
+        gaps: GapCosts,
+    ) -> anyhow::Result<Vec<i32>> {
+        if let Some(b) = bias {
+            anyhow::ensure!(b.len() == query.len(), "bias length {} != query length {}", b.len(), query.len());
+        }
+        let views: Vec<ProteinCodes<'_>> = windows.iter().map(|w| ProteinCodes::new_unchecked(w)).collect();
+        let mut kc = KernelCounters::default();
+        Ok(SCRATCH.with(|s| score_many(ProteinCodes::new_unchecked(query), bias, &views, matrix, gaps, &mut s.borrow_mut(), &mut kc)))
+    }
+}
+
+/// Legacy CPU executor (ASCII input; see [`GpuExecutor`]).
+pub struct CpuExecutor {
+    inner: BackendExecutor,
+}
 
 impl CpuExecutor {
     pub fn new() -> Self {
-        Self
+        Self { inner: BackendExecutor::new(Arc::new(CpuBackend)) }
     }
 }
 
@@ -39,42 +69,10 @@ impl GpuExecutor for CpuExecutor {
         &self,
         query: &[u8],
         subjects: &[Vec<u8>],
-        scoring: &Scoring,
+        scoring: &crate::algorithm::Scoring,
         gap_open: i32,
         gap_extend: i32,
     ) -> anyhow::Result<Vec<GpuScore>> {
-        match scoring {
-            // Protein path: AVX2 SIMD when available, scalar fallback inside sw_simd_protein_batch.
-            // Caller-side encoding is required (ASCII → 0..23). The query and subjects come in as
-            // raw ASCII here, so we encode on the fly.
-            Scoring::Matrix(matrix) => {
-                let q_enc = crate::gpu::encoding::encode_protein(query);
-                let s_enc: Vec<Vec<u8>> = subjects
-                    .par_iter()
-                    .map(|s| crate::gpu::encoding::encode_protein(s))
-                    .collect();
-                let scores = sw_simd_protein_batch(&q_enc, &s_enc, matrix.as_ref(), gap_open, gap_extend);
-                Ok(scores
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, score)| GpuScore { subject_idx: i, score })
-                    .collect())
-            }
-            // Nucleotide path: still uses the scalar kernel for now (SIMD nucleotide is
-            // straightforward to add but not the bottleneck — protein is where the throughput
-            // gap to SWORD/DIAMOND lives).
-            Scoring::NucleotideSimple { match_score, mismatch } => {
-                let aligner = SmithWaterman::nucleotide(gap_open, gap_extend, *match_score, *mismatch);
-                let scores: Vec<GpuScore> = subjects
-                    .par_iter()
-                    .enumerate()
-                    .map(|(idx, subj)| {
-                        let res = aligner.align(query, subj);
-                        GpuScore { subject_idx: idx, score: res.score }
-                    })
-                    .collect();
-                Ok(scores)
-            }
-        }
+        self.inner.score_batch(query, subjects, scoring, gap_open, gap_extend)
     }
 }

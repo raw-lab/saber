@@ -1,0 +1,12 @@
+-rw-r--r-- 1 root root 11755080 Oct 19 15:13 /home/claude/bench/final13/index/mmseqs_DB.dmnd
+-rw-r--r-- 1 root root 10324348 Oct 19 15:13 /home/claude/bench/final13/index/mmseqs_DB.sdx
+-rw-r--r-- 1 root root 43091108 Oct 19 15:13 /home/claude/bench/final13/index/mmseqs_DB.v12.sdx
+-rw-r--r-- 1 root root 833367820 Oct 19 15:14 /home/claude/bench/final13/index/mmseqs_DB.p4M.sdx
+mmseqs_DB: scan == query-major output
+mmseqs_DB: scan == partition-major output
+-rw-r--r-- 1 root root  39883840 Oct 19 15:14 /home/claude/bench/final13/index/db400.dmnd
+-rw-r--r-- 1 root root  42965141 Oct 19 15:14 /home/claude/bench/final13/index/db400.sdx
+-rw-r--r-- 1 root root 175243442 Oct 19 15:14 /home/claude/bench/final13/index/db400.v12.sdx
+-rw-r--r-- 1 root root 3423358448 Oct 19 15:19 /home/claude/bench/final13/index/db400.p4M.sdx
+db400: scan == query-major output
+db400: scan == partition-major output

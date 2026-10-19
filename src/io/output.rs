@@ -26,7 +26,7 @@ fn write_m8_row<W: Write>(w: &mut W, a: &AlignmentResult) -> IoResult<()> {
         a.identity,
         a.align_length,
         a.mismatches,
-        a.gaps,
+        a.gap_opens,
         a.query_start,
         a.query_end,
         a.subject_start,
@@ -99,8 +99,13 @@ impl<W: Write + Send> Writer for M0Writer<W> {
         let pct_gaps = if a.align_length > 0 { 100.0 * a.gaps as f64 / a.align_length as f64 } else { 0.0 };
         writeln!(self.writer, ">{}", a.subject_id)?;
         writeln!(self.writer, " Score = {:.1} bits ({}), Expect = {}", a.bitscore, a.score, format_evalue(a.evalue))?;
-        writeln!(self.writer, " Identities = {}/{} ({:.0}%), Gaps = {}/{} ({:.0}%)",
-            a.matches, a.align_length.max(1), a.identity, a.gaps, a.align_length.max(1), pct_gaps)?;
+        let pct_pos = if a.align_length > 0 { 100.0 * a.positives as f64 / a.align_length as f64 } else { 0.0 };
+        writeln!(self.writer, " Identities = {}/{} ({:.0}%), Positives = {}/{} ({:.0}%), Gaps = {}/{} ({:.0}%)",
+            a.matches, a.align_length.max(1), a.identity, a.positives, a.align_length.max(1), pct_pos,
+            a.gaps, a.align_length.max(1), pct_gaps)?;
+        if !a.evalue_calibrated {
+            writeln!(self.writer, " WARNING: E-value computed with UNCALIBRATED statistical parameters")?;
+        }
         writeln!(self.writer)?;
         // Print blocks of 60 like BLAST.
         let block = 60usize;
@@ -135,6 +140,12 @@ impl<W: Write + Send> Writer for M0Writer<W> {
     fn flush(&mut self) -> IoResult<()> { self.writer.flush() }
 }
 
+/// SAM `NM`: edit distance to the reference = mismatched columns plus
+/// inserted and deleted residues (1.0/1.1 wrote mismatches only).
+fn sam_edit_distance(a: &AlignmentResult) -> usize {
+    a.mismatches + a.gaps
+}
+
 pub struct SAMWriter<W: Write> { writer: BufWriter<W> }
 impl<W: Write> SAMWriter<W> {
     pub fn new(writer: W) -> Self { Self { writer: BufWriter::new(writer) } }
@@ -147,7 +158,7 @@ impl<W: Write + Send> Writer for SAMWriter<W> {
         writeln!(
             self.writer,
             "{}\t0\t{}\t{}\t{}\t{}\t*\t0\t0\t{}\t*\tAS:i:{}\tNM:i:{}\tEV:f:{}",
-            a.query_id, a.subject_id, a.subject_start, mapq, cigar, seq, a.score, a.mismatches, format_evalue(a.evalue),
+            a.query_id, a.subject_id, a.subject_start, mapq, cigar, seq, a.score, sam_edit_distance(a), format_evalue(a.evalue),
         )
     }
     fn write_header(&mut self) -> IoResult<()> {
@@ -173,7 +184,7 @@ impl<W: Write + Send> Writer for BAMWriter<W> {
         writeln!(
             self.writer,
             "{}\t0\t{}\t{}\t{}\t{}\t*\t0\t0\t{}\t*\tAS:i:{}\tNM:i:{}\tEV:f:{}",
-            a.query_id, a.subject_id, a.subject_start, mapq, cigar, seq, a.score, a.mismatches, format_evalue(a.evalue),
+            a.query_id, a.subject_id, a.subject_start, mapq, cigar, seq, a.score, sam_edit_distance(a), format_evalue(a.evalue),
         )
     }
     fn write_header(&mut self) -> IoResult<()> {
@@ -199,6 +210,16 @@ struct JsonAlignment<'a> {
     query_range: (usize, usize),
     subject_range: (usize, usize),
     cigar: &'a str,
+    gap_opens: usize,
+    positives: usize,
+    query_length: usize,
+    subject_length: usize,
+    query_cover: f64,
+    subject_cover: f64,
+    query_frame: i8,
+    subject_frame: i8,
+    evalue_calibrated: bool,
+    exact: bool,
 }
 
 pub struct JSONWriter<W: Write> {
@@ -230,6 +251,16 @@ impl<W: Write + Send> Writer for JSONWriter<W> {
             query_range: (a.query_start, a.query_end),
             subject_range: (a.subject_start, a.subject_end),
             cigar: &a.cigar,
+            gap_opens: a.gap_opens,
+            positives: a.positives,
+            query_length: a.query_length,
+            subject_length: a.subject_length,
+            query_cover: a.query_coverage,
+            subject_cover: a.subject_coverage,
+            query_frame: a.query_frame,
+            subject_frame: a.subject_frame,
+            evalue_calibrated: a.evalue_calibrated,
+            exact: a.exact,
         };
         let s = serde_json::to_string(&j).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         write!(self.writer, "  {}", s)
@@ -284,6 +315,7 @@ mod tests {
             align_length: 100, matches: 95, mismatches: 5, gaps: 0,
             cigar: "100M".into(),
             query_seq: "ACGT".into(), subject_seq: "ACGT".into(), match_string: "||||".into(),
+            ..AlignmentResult::default()
         }
     }
 
@@ -298,6 +330,22 @@ mod tests {
         let s = String::from_utf8(out).unwrap();
         let cols: Vec<&str> = s.trim_end().split('\t').collect();
         assert_eq!(cols.len(), 12, "row: {:?}", s);
+    }
+
+    #[test]
+    fn sam_nm_counts_mismatches_and_indels() {
+        let mut a = sample();
+        a.mismatches = 4;
+        a.gaps = 3;
+        a.cigar = "50M2I47M1D1M".into();
+        let mut out = Vec::new();
+        {
+            let mut w = SAMWriter::new(&mut out);
+            w.write_alignment(&a).unwrap();
+            w.flush().unwrap();
+        }
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("\tNM:i:7\t"), "{s}");
     }
 
     #[test]

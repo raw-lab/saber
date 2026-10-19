@@ -1,6 +1,7 @@
 /// I/O utilities for reading and writing sequence alignments
 pub mod fasta;
 pub mod output;
+pub mod stream;
 
 pub use fasta::{Fasta, FastaRecord, FastaReader};
 pub use output::{Writer, M8Writer, M9Writer, M0Writer, SAMWriter, BAMWriter, JSONWriter, CSVWriter};

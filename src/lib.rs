@@ -5,10 +5,13 @@
 //! [`scoring::EValue`].
 
 pub mod algorithm;
+pub mod alphabet;
+pub mod masking;
 pub mod db;
 pub mod doctor;
 pub mod io;
 pub mod scoring;
+pub mod search;
 pub mod utils;
 
 // GPU module is always present; the CUDA backend inside it is feature-gated.
@@ -28,7 +31,7 @@ pub use io::{
 pub use scoring::{BitScore, EValue, ScoreMatrix, ScoringSystem};
 pub use utils::{ProgressBar, Statistics};
 
-pub const VERSION: &str = "1.0.2";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The SABER wordmark: "SABER" in figlet line-art with a sword blade threaded
 /// through the centre line (pommel ◉ and crossguard ╪ at the hilt, point ▶ at

@@ -1,0 +1,13 @@
+SABER tantan masking: single precision (src/masking.rs, released) vs the double-precision
+version it replaced (kept outside the tree; same algorithm and parameters), on the
+masking validation set of results/masking_vs_tantan.txt (first 3,000 SCOP40 domains +
+500 MMseqs2 example queries). Both built as examples/mask_probs; compared with
+scripts/compare_masking.py (reference = double precision). Probabilities are printed
+with three decimals, so differences of 0.001 are rounding.
+
+f64: lambda = 0.32403216734804396
+f32: lambda = 0.32403216734804396
+positions=764596 masked_ref=21550 (2.818%) masked_test=21550 (2.818%)
+call agreement=1.00000 both=21550 ref_only=0 test_only=0 jaccard=1.0000
+pearson r=1.00000 mean|diff|=0.00000
+max|diff| = 1.00e-03

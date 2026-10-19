@@ -67,6 +67,38 @@ impl EValue {
         (self.lambda * s - self.kappa.ln()) / LN_2
     }
 
+    /// Smallest raw SW score that can still pass an E-value cutoff and an
+    /// optional minimum bit-score.
+    ///
+    /// Both statistics are strictly monotonic in the raw score and depend on
+    /// nothing else about the alignment — not its path, not its identity, not
+    /// the subject sequence. Inverting them therefore gives an exact score
+    /// floor, which lets callers discard hopeless candidates *before* paying
+    /// for a traceback rather than after.
+    ///
+    ///   E = K·m·n·exp(-λS)  ≤ E_cut   ⟺   S ≥ ln(K·m·n / E_cut) / λ
+    ///   S' = (λS - ln K)/ln2 ≥ B      ⟺   S ≥ (B·ln2 + ln K) / λ
+    ///
+    /// Returns at least 1, since a raw score of 0 never produces a hit.
+    pub fn min_passing_score(&self, evalue_cut: f64, min_bitscore: Option<f64>) -> i32 {
+        let mut floor = 1.0f64;
+        if self.lambda > 0.0 {
+            if evalue_cut > 0.0 && evalue_cut.is_finite() {
+                let ks = self.kappa * self.search_space();
+                if ks > 0.0 {
+                    floor = floor.max((ks / evalue_cut).ln() / self.lambda);
+                }
+            }
+            if let Some(b) = min_bitscore {
+                floor = floor.max((b * LN_2 + self.kappa.ln()) / self.lambda);
+            }
+        }
+        if !floor.is_finite() {
+            return 1;
+        }
+        (floor.ceil() as i64).clamp(1, i32::MAX as i64) as i32
+    }
+
     /// E = m * n * 2^(-S').
     pub fn bitscore_to_evalue(&self, bitscore: f64) -> f64 {
         self.search_space() * (-bitscore * LN_2).exp()

@@ -1,0 +1,12 @@
+{
+ "name": "saber_v1.1.0",
+ "evalue": 0.001,
+ "queries_with_hits": 400,
+ "retention_weaker": 0.9484536082474226,
+ "retention_stronger": 0.9621309370988447,
+ "weaker_tp_alone": 194,
+ "weaker_tp_in_multidomain": 184,
+ "stronger_tp_alone": 1558,
+ "stronger_tp_in_multidomain": 1499,
+ "fp_multidomain": 7
+}

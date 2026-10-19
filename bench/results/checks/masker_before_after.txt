@@ -1,0 +1,26 @@
+tantan masker, one thread, all 91,206 sequences (38,170,522 residues) of the
+at-scale database (bench: examples/mask_bench.rs), same machine and session,
+before (SABER 1.3 build 935bc866, scalar-autovectorised forward-backward) and
+after (build b0066185, explicit AVX2 path compute_avx2_w50):
+
+before: sequences 91206 residues 38170522 masked 1831349 time 6.893 s (180.6 ns/residue) checksum 91795ff918819453
+before: sequences 91206 residues 38170522 masked 1831349 time 7.220 s (189.2 ns/residue) checksum 91795ff918819453
+before: sequences 91206 residues 38170522 masked 1831349 time 6.428 s (168.4 ns/residue) checksum 91795ff918819453
+after:  sequences 91206 residues 38170522 masked 1831349 time 2.458 s (64.4 ns/residue) checksum 91795ff918819453
+after:  sequences 91206 residues 38170522 masked 1831349 time 2.522 s (66.1 ns/residue) checksum 91795ff918819453
+
+Index construction at scale (saber --makedb, 2 threads), alternating:
+before 7.32 / 6.91 / 6.80 s (CPU 13.6 / 12.9 / 12.6 s)
+after  4.83 / 4.47 / 4.24 s (CPU 8.4 / 8.2 / 7.4 s); index files byte-identical (cmp).
+
+Search outputs of the new build compared with the benchmarked outputs of the
+previous build (cmp): SCOP40 all-vs-all default / fast / more-sensitive,
+MMseqs2 default (-E 1e-3), blastx default, tblastn default, low-complexity
+default, two-domain default, at-scale default with the index built in memory:
+all identical.
+
+Index construction cost at scale by component (previous build, makedb
+variants, 2 threads): full 6.6-6.8 s wall / 12.1 CPU-s; without masking
+3.2 s / 5.6; masking + 1 seed shape 4.5-5.2 s / 7.5-8.6; no masking + 1 shape
+0.7 s / 0.65 -> masking about 6.5-6.9 CPU-s, frequent-seed counting about
+0.33 CPU-s per seed shape (16 shapes), the rest about 0.35 CPU-s.

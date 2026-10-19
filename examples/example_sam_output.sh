@@ -1,176 +1,40 @@
-#!/bin/bash
-# Example: SAM/BAM Output Formats
-# Demonstrates generating SAM/BAM files compatible with standard
-# bioinformatics tools like samtools, bcftools, IGV, etc.
+#!/usr/bin/env bash
+# SAM output on the bundled example data, with optional samtools post-processing.
+# SABER writes SAM only; BAM conversion, sorting and indexing are left to samtools.
+#
+# Run from anywhere after `cargo build --release`.
+#   SABER=/path/to/saber   use another binary (default: ./target/release/saber)
+#   OUT=/some/dir          keep the outputs there (default: a new temporary directory)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+SABER="${SABER:-./target/release/saber}"
+OUT="${OUT:-$(mktemp -d)}"
+mkdir -p "$OUT"
+[ -x "$SABER" ] || { echo "saber not found at $SABER (run: cargo build --release)" >&2; exit 1; }
+echo "outputs: $OUT"
 
-set -e
+echo "== 1. nucleotide alignments as SAM (AS = raw score, NM = edit distance, EV = E-value)"
+"$SABER" --mode nn -q examples/nucleotide_query.fa -d examples/nucleotide_db.fa --outfmt sam -o "$OUT/nn.sam"
+cut -f1-9,12- "$OUT/nn.sam"
 
-SABER="./target/release/saber"
-READS="examples/data/reads.fastq"
-REFERENCE="examples/data/reference.fasta"
+echo "== 2. protein alignments as SAM (sequence field holds the protein query)"
+"$SABER" -q examples/protein_query.fa -d examples/protein_db.fa -E 1e-5 --outfmt sam -o "$OUT/pp.sam"
+cut -f1-9,12- "$OUT/pp.sam"
 
-echo "================================================"
-echo "SABER Example: SAM/BAM Output"
-echo "================================================"
+echo "== 3. high-identity alignments only"
+"$SABER" --mode nn -q examples/nucleotide_query.fa -d examples/nucleotide_db.fa --percent-identity 99 --outfmt sam -o "$OUT/nn_strict.sam"
+grep -vc '^@' "$OUT/nn_strict.sam" | sed 's/$/ alignment(s) at >= 99 % identity/'
 
-# Generate SAM format (text-based, easily human-readable)
-echo "Generating SAM format output..."
-$SABER \
-    -i "$READS" \
-    -d "$REFERENCE" \
-    --mode nn \
-    --match 2 \
-    --mismatch -3 \
-    -v 1e-20 \
-    -o alignments.sam \
-    --outfmt sam \
-    -t auto \
-    --verbose
-
-echo "SAM file generated: alignments.sam"
-echo ""
-echo "SAM file header:"
-head -10 alignments.sam
-echo ""
-
-# Convert SAM to BAM using samtools
-if command -v samtools &> /dev/null; then
-    echo "Converting SAM to BAM with samtools..."
-    samtools view -b -o alignments.bam alignments.sam
-    samtools index alignments.bam alignments.bam.bai
-    
-    echo "✓ BAM file generated: alignments.bam"
-    echo "✓ BAM index generated: alignments.bam.bai"
-    echo ""
-    
-    # View BAM statistics
-    echo "BAM file statistics:"
-    samtools flagstat alignments.bam
-    echo ""
-    
-    # View alignments in detail
-    echo "First 5 alignments (samtools view):"
-    samtools view alignments.bam | head -5
-    echo ""
-    
-    # Index and sort BAM (recommended for some tools)
-    echo "Sorting and indexing BAM file..."
-    samtools sort alignments.bam -o alignments.sorted.bam
-    samtools index alignments.sorted.bam
-    
-    echo "✓ Sorted BAM file: alignments.sorted.bam"
-    echo "✓ Sorted BAM index: alignments.sorted.bam.bai"
+if command -v samtools >/dev/null 2>&1; then
+    echo "== 4. samtools: SAM -> sorted, indexed BAM"
+    # The SAM header has no @SQ lines (reference lengths are not written), so
+    # give samtools the reference index explicitly.
+    samtools faidx examples/nucleotide_db.fa --fai-idx "$OUT/nucleotide_db.fa.fai"
+    samtools view -b -t "$OUT/nucleotide_db.fa.fai" "$OUT/nn.sam" | samtools sort -o "$OUT/nn.sorted.bam"
+    samtools index "$OUT/nn.sorted.bam"
+    samtools flagstat "$OUT/nn.sorted.bam"
 else
-    echo "samtools not found, generating BAM directly with SABER..."
-    
-    $SABER \
-        -i "$READS" \
-        -d "$REFERENCE" \
-        --mode nn \
-        -o alignments.bam \
-        --outfmt bam \
-        --bam-index \
-        -t auto
-    
-    echo "✓ BAM file generated: alignments.bam"
-    echo "✓ BAM index generated: alignments.bam.bai"
+    echo "== 4. samtools not installed; skipping BAM conversion"
 fi
 
-echo ""
-
-# Generate multiple alignments with different stringencies
-echo "Generating strict mapping (high quality)..."
-$SABER \
-    -i "$READS" \
-    -d "$REFERENCE" \
-    --mode nn \
-    --match 2 \
-    --mismatch -3 \
-    -v 1e-50 \
-    --percent-identity 99.0 \
-    -o alignments_strict.sam \
-    --outfmt sam
-
-echo "✓ Strict mapping: alignments_strict.sam"
-
-echo ""
-echo "Generating sensitive mapping (allow more mismatches)..."
-$SABER \
-    -i "$READS" \
-    -d "$REFERENCE" \
-    --mode nn \
-    --match 1 \
-    --mismatch -4 \
-    -v 1e-10 \
-    --percent-identity 85.0 \
-    -o alignments_sensitive.sam \
-    --outfmt sam
-
-echo "✓ Sensitive mapping: alignments_sensitive.sam"
-
-echo ""
-
-# SAM with detailed statistics
-if command -v samtools &> /dev/null; then
-    echo "Detailed alignment statistics:"
-    echo ""
-    echo "Strict mapping stats:"
-    samtools view -b alignments_strict.sam | samtools flagstat -
-    echo ""
-    echo "Sensitive mapping stats:"
-    samtools view -b alignments_sensitive.sam | samtools flagstat -
-fi
-
-echo ""
-
-# Performance comparison
-echo "Testing performance with different output formats..."
-
-echo "SAM format:"
-/usr/bin/time -f "  Time: %e seconds, Memory: %M KB" \
-    $SABER \
-    -i "$READS" \
-    -d "$REFERENCE" \
-    --mode nn \
-    -o /tmp/test.sam \
-    --outfmt sam \
-    2>&1 | grep -E "Time:|Memory:"
-
-echo "BAM format:"
-/usr/bin/time -f "  Time: %e seconds, Memory: %M KB" \
-    $SABER \
-    -i "$READS" \
-    -d "$REFERENCE" \
-    --mode nn \
-    -o /tmp/test.bam \
-    --outfmt bam \
-    2>&1 | grep -E "Time:|Memory:"
-
-echo "M8 format:"
-/usr/bin/time -f "  Time: %e seconds, Memory: %M KB" \
-    $SABER \
-    -i "$READS" \
-    -d "$REFERENCE" \
-    --mode nn \
-    -o /tmp/test.m8 \
-    --outfmt m8 \
-    2>&1 | grep -E "Time:|Memory:"
-
-echo ""
-echo "================================================"
-echo "SAM/BAM output examples completed!"
-echo "================================================"
-
-echo ""
-echo "Generated files:"
-echo "  ✓ alignments.sam - Text SAM format"
-echo "  ✓ alignments.bam - Binary BAM format (if samtools available)"
-echo "  ✓ alignments_strict.sam - High-quality mappings only"
-echo "  ✓ alignments_sensitive.sam - Permissive mappings"
-echo ""
-echo "Use with common bioinformatics tools:"
-echo "  samtools view alignments.bam              # View BAM"
-echo "  samtools flagstat alignments.bam          # Statistics"
-echo "  samtools sort alignments.sam > sorted.bam # Sort"
-echo "  samtools index sorted.bam                 # Index"
-echo "  bcftools mpileup -f ref.fa sorted.bam | bcftools call ...  # Variant calling"
+echo "done: $OUT"

@@ -1,0 +1,31 @@
+date: 2026-10-18T22:20:21-04:00
+host: Linux vm 6.18.44-fc-v139 #1 SMP PREEMPT_DYNAMIC @0 x86_64 x86_64 x86_64 GNU/Linux
+cpu:  Intel(R) Xeon(R) Processor @ 2.80GHz
+cores: 2
+mem: MemTotal:        8222320 kB
+rustc (SABER builds): rustc 1.75.0 (82e1608df 2023-12-21) (built from a source tarball)
+flags: cargo build --release (opt-level=3, lto=thin, codegen-units=1), no target-cpu flags
+diamond: diamond version 2.2.8
+/home/claude/work/target175_baseline_v102/release/saber: saber 1.0.2 sha256 121238687989fe69
+/home/claude/work/target175_opt_v110/release/saber: saber 1.0.2 sha256 452b3281f146818e
+/home/claude/work/target175/release/saber: saber 1.2.0 sha256 f2da505c17db56df
+datasets:
+  55d48bb7b86a6d275694e2f482307f772cc7ee0c9a6dacdbf4014a3443ac9809  /home/claude/bench/data/mmseqs_DB.fasta
+  c99bc94ada4ac5cb89d777100f2587186fe81ec0adcf1a7492c89cd050a4e7a2  /home/claude/bench/data/mmseqs_QUERY.fasta
+  93268cefd082fb9d82fdb7284183f392d029cc835b36525e2c8d5e51044adfc2  /home/claude/bench/data/scop40.fa
+  bbbcf71d713f3791bb281c6402e149e42b628f16e6e213b5d7ed922c89e09075  /home/claude/bench/data/scop40.labels.tsv
+derived:
+  a5a95c8388ed2bf0747a45295d4f42bb61f9e9451402d3d2121419589a5f504b  /home/claude/bench/derived/lowc.db.fa
+  a63e3b931195fb0dc371b966e21c924190ecf3247929632d03ae690f7f7bc28f  /home/claude/bench/derived/lowc.query.fa
+  ce4b34cc314e4a3a29776b3466ba6987f92d0abb1e707afc81fad4e84c8eed3a  /home/claude/bench/derived/mm.db25.fa
+  4b62c0f48f5d6128e2d5e07b1b9e2dd461cd2c6e2a45f218c7f8d1e53bbb05ff  /home/claude/bench/derived/mm.db400.fa
+  f785c6d8a1b00aaf8d9af895dbeac57b2a9061ae45500ac29d516e9af3dc9ba4  /home/claude/bench/derived/mm.db50.fa
+  f2a59af2adb788191c53be9b94c11d4d6fc3da28b546bd86bfbb3400b89d96cd  /home/claude/bench/derived/mm.long.fa
+  1dc987e9cb3ae7d90bf909bce64a62b65dc490aae9c75058caa9d87cd44bfeb5  /home/claude/bench/derived/mm.q100.fa
+  0cb03e0934dc3bb8ed76cede6f9a2183c09a51ee8f159a89e9b8d0f6e95e6f3e  /home/claude/bench/derived/mm.q250.fa
+  018e74225eccc832ec898887c775aed58b37abb645dc0cceb1dd552ad435ba99  /home/claude/bench/derived/mm.q50.fa
+  ec28dc0bcea49f4a71eea8c8357649bc961c568e5d18fcf35609c4eedc98e6e7  /home/claude/bench/derived/scop40.bt.fna
+  bf2622548cc2cae031deb0df28f8951e53a3fa1083bfd963252cdc3f4d09072f  /home/claude/bench/derived/scop40.frag.fa
+  a724efe50db6127471bba43dc4212cce2f5d851accf9b225bc6e09ec34b9cea5  /home/claude/bench/derived/scop40.multi.fa
+  06215bf00d63c287e0eadb764f331955d0c1057978f5cb5eff03611d5749bff7  /home/claude/bench/derived/scop40.shuf.fa
+  759302bcf1d89bcc57a6e294df831057fbe01ca86ea330cd6096ce8432b7e274  /home/claude/bench/derived/scop40.wshuf10.fa

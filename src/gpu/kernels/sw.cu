@@ -1,315 +1,99 @@
-// SABER GPU Smith-Waterman kernels
-// =================================
-// Inter-task parallelism: each CUDA thread computes the SW score of one
-// (query, subject) pair. Subjects are processed in parallel across the grid.
+// SABER GPU Smith-Waterman score kernel (v1.2)
+// ============================================
+// Inter-task parallelism: each CUDA thread computes the local-alignment score
+// of the query against one subject window.
 //
-// References:
-//   - Liu, Y. et al. "CUDASW++: optimizing Smith-Waterman sequence database
-//     searches for CUDA-enabled graphics processing units." BMC Res. Notes (2009)
-//   - Korpar, M. & Sikic, M. "SW#–GPU-enabled exact alignments on genome scale."
-//     Bioinformatics (2013)
+// Contract (must match src/gpu/mod.rs and the CPU kernel exactly):
+//   * query / subjects are canonical alignment codes (protein ARNDCQEGHILKMFPSTWYVBZX*
+//     -> 0..23, nucleotide ACGTN -> 0..4); codes >= 24 are scored as X (22).
+//     The host never re-encodes and neither does this kernel.
+//   * substitution matrix: 24x24 int32, row = query code, column = subject code.
+//   * gaps (SABER convention): a gap of length k costs gap_open + (k-1)*gap_extend.
+//   * bias[j] (int8, one per query position, zeros when unused) is added to every
+//     aligned column involving query position j.
+//   * all DP values are int32: no saturation (v1.1 used int16 and silently clamped).
 //
-// Memory model:
-//   * Query: regular global memory; broadcast read pattern is L1/L2 friendly.
-//     (Constant memory would be ~5% faster but introduces 64KB length limit.)
-//   * Substitution matrix: shared memory (24x24 = 576 bytes per block).
-//   * Per-thread DP rows H[query_len], E[query_len]: global memory.
-//     A 5000-aa query × 100k subjects = ~2GB of DP state. Use batching
-//     on the host side to stay under device memory.
+// Work arrays are interleaved [query_len][num_subjects] so that, at a given
+// query position, consecutive threads touch consecutive words (coalesced).
 //
-// Algorithm: Gotoh affine-gap Smith-Waterman with local zero-floor.
-//   Recurrence (subject as outer dim i, query as inner dim j):
-//     H[i][j] = max(H[i-1][j-1] + sub(s_i, q_j),    // diagonal: match/mismatch
-//                   E[i][j],                          // gap in query
-//                   F[i][j],                          // gap in subject
-//                   0)                                // local: never negative
-//     E[i][j] = max(E[i-1][j] - gap_extend,
-//                   H[i-1][j] - gap_open)
-//     F[i][j] = max(F[i][j-1] - gap_extend,
-//                   H[i][j-1] - gap_open)
+// Recurrence (subject outer index i, query inner index j):
+//   E[i][j] = max(E[i-1][j] - ge, H[i-1][j] - go)        gap in query (vertical)
+//   F[i][j] = max(F[i][j-1] - ge, H[i][j-1] - go)        gap in subject (horizontal)
+//   H[i][j] = max(0, H[i-1][j-1] + S(q_j, s_i) + bias_j, E[i][j], F[i][j])
 //
-// We track H and E across subject rows (i direction). F is computed inline
-// during the inner query loop because it propagates only within a single row.
-//
-// Alphabet encoding (must match host-side encoding in src/gpu/encoding.rs):
-//   Protein 24-letter: ARNDCQEGHILKMFPSTWYVBZX* → 0..23
-//   Nucleotide 5-letter: ACGTN → 0..4 (we still use the 24x24 matrix shape;
-//   only the top-left 5x5 region matters for nucleotide mode).
+// The file is also compiled as plain C++ by gpu/emulate/ (with a small shim for
+// the CUDA built-ins) to test the kernel logic against the CPU reference on
+// machines without a GPU.
 
-
-// NVRTC compilation does not have access to standard host include paths,
-// so we define the required fixed-width integer types locally instead of
-// including <stdint.h>.
-
-//#include <stdint.h>
 typedef unsigned char      uint8_t;
-//typedef unsigned short     uint16_t;
 typedef unsigned int       uint32_t;
-typedef unsigned long long uint64_t;
 typedef signed char        int8_t;
-typedef short              int16_t;
 typedef int                int32_t;
-//typedef long long          int64_t;
-
 
 #define SABER_ALPHABET_SIZE 24
-#define SABER_NEG_INF      ((int16_t)-30000)
+#define SABER_NEG_INF      (-(1 << 29))
 
-// ---------------------------------------------------------------------------
-// Protein Smith-Waterman, score-only.
-//
-// Grid: launch with num_subjects threads total.
-// Block size: tunable (128 is a reasonable default; see CudaExecutor::launch).
-//
-// Input layout:
-//   - query[0..query_len]: encoded query (0..23 per residue)
-//   - subjects[0..total_residues]: concatenated encoded subjects
-//   - subj_offsets[0..num_subjects+1]: prefix-sum, subject i is
-//     subjects[subj_offsets[i]..subj_offsets[i+1]]
-//   - sub_matrix[24*24]: row-major substitution matrix (int8)
-//   - gap_open, gap_extend: positive penalty values
-//   - work_H, work_E: scratch buffers, sized [num_subjects * query_len] each
-//   - scores: output, one int32 per subject
-//
-// Returned score is the maximum SW score across the entire DP table for
-// that (query, subject) pair. Traceback is NOT performed on the GPU —
-// the host runs CPU traceback on the top-K hits.
-// ---------------------------------------------------------------------------
-extern "C" __global__ void saber_sw_protein_score(
-    const uint8_t* __restrict__ query,
-    int32_t                     query_len,
-    const uint8_t* __restrict__ subjects,
+extern "C" __global__ void saber_sw_score_i32(
+    const uint8_t*  __restrict__ query,
+    int32_t                      query_len,
+    const int8_t*   __restrict__ bias,
+    const uint8_t*  __restrict__ subjects,
     const uint32_t* __restrict__ subj_offsets,
-    int32_t                     num_subjects,
-    const int8_t* __restrict__  sub_matrix,
-    int32_t                     gap_open,
-    int32_t                     gap_extend,
-    int16_t* __restrict__       work_H,
-    int16_t* __restrict__       work_E,
-    int32_t* __restrict__       scores
+    int32_t                      num_subjects,
+    const int32_t*  __restrict__ sub_matrix,
+    int32_t                      gap_open,
+    int32_t                      gap_extend,
+    int32_t*        __restrict__ work_H,
+    int32_t*        __restrict__ work_E,
+    int32_t*        __restrict__ scores
 ) {
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // Cooperative load of the substitution matrix into shared memory.
-    __shared__ int8_t s_sub[SABER_ALPHABET_SIZE * SABER_ALPHABET_SIZE];
+    __shared__ int32_t s_sub[SABER_ALPHABET_SIZE * SABER_ALPHABET_SIZE];
     for (int i = threadIdx.x; i < SABER_ALPHABET_SIZE * SABER_ALPHABET_SIZE; i += blockDim.x) {
         s_sub[i] = sub_matrix[i];
     }
     __syncthreads();
 
-    if (tid >= num_subjects) return;
-
-    const uint32_t subj_start = subj_offsets[tid];
-    const uint32_t subj_end   = subj_offsets[tid + 1];
-    const int      subj_len   = (int)(subj_end - subj_start);
-
-    // Per-thread DP rows. work_H and work_E are sized [num_subjects][query_len].
-    int16_t* H = work_H + (size_t)tid * query_len;
-    int16_t* E = work_E + (size_t)tid * query_len;
-
-    // Initialize H[0..query_len] = 0, E[0..query_len] = NEG_INF.
-    // E = NEG_INF prevents spurious gap-opens at i = 0.
-    for (int j = 0; j < query_len; j++) {
-        H[j] = 0;
-        E[j] = SABER_NEG_INF;
-    }
-
-    int32_t max_score = 0;
-
-    const int16_t go = (int16_t)gap_open;
-    const int16_t ge = (int16_t)gap_extend;
-
-    for (int i = 0; i < subj_len; i++) {
-        // Load and bounds-check the encoded subject residue.
-        uint8_t s_raw = subjects[subj_start + i];
-        // Out-of-range encoding maps to X (22) — defensive against malformed input.
-        const int s_enc = (s_raw < SABER_ALPHABET_SIZE) ? (int)s_raw : 22;
-
-        int16_t H_diag = 0;          // H[i-1][j-1] going into iteration j
-        int16_t H_left = 0;          // H[i][j-1]
-        int16_t F      = SABER_NEG_INF;  // gap-in-subject state, resets each row
-
-        // Pointer to this subject's row in the substitution matrix.
-        const int8_t* sub_row = &s_sub[s_enc * SABER_ALPHABET_SIZE];
-
-        for (int j = 0; j < query_len; j++) {
-            const uint8_t q_raw = query[j];
-            const int q_enc = (q_raw < SABER_ALPHABET_SIZE) ? (int)q_raw : 22;
-            const int16_t match_score = (int16_t)sub_row[q_enc];
-
-            // Save H[i-1][j] before we overwrite — it becomes H_diag for j+1.
-            const int16_t next_diag = H[j];
-
-            // E[j]: gap-in-query state, propagates down (across subject rows).
-            //   open from H[i-1][j], extend from E[i-1][j].
-            int16_t e_ext  = E[j] - ge;
-            int16_t e_open = H[j] - go;
-            int16_t e      = (e_ext > e_open) ? e_ext : e_open;
-
-            // F: gap-in-subject state, propagates right (within current row).
-            int16_t f_ext  = F - ge;
-            int16_t f_open = H_left - go;
-            int16_t f      = (f_ext > f_open) ? f_ext : f_open;
-
-            // H[i][j] = max(diag + sub, e, f, 0).
-            int16_t h = H_diag + match_score;
-            if (e > h) h = e;
-            if (f > h) h = f;
-            if (h < 0) h = 0;
-
-            // Commit.
-            H[j]    = h;
-            E[j]    = e;
-            F       = f;
-            H_diag  = next_diag;
-            H_left  = h;
-
-            if ((int32_t)h > max_score) max_score = (int32_t)h;
-        }
-    }
-
-    scores[tid] = max_score;
-}
-
-// ---------------------------------------------------------------------------
-// Nucleotide Smith-Waterman, score-only.
-//
-// Identical structure to the protein kernel, but uses simple match/mismatch
-// scoring inline rather than a substitution matrix lookup. This is ~10%
-// faster than the protein path due to one fewer memory load per cell.
-// ---------------------------------------------------------------------------
-extern "C" __global__ void saber_sw_nucleotide_score(
-    const uint8_t* __restrict__ query,
-    int32_t                     query_len,
-    const uint8_t* __restrict__ subjects,
-    const uint32_t* __restrict__ subj_offsets,
-    int32_t                     num_subjects,
-    int32_t                     match_score,
-    int32_t                     mismatch_penalty,  // negative
-    int32_t                     gap_open,
-    int32_t                     gap_extend,
-    int16_t* __restrict__       work_H,
-    int16_t* __restrict__       work_E,
-    int32_t* __restrict__       scores
-) {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= num_subjects) return;
 
-    const uint32_t subj_start = subj_offsets[tid];
-    const uint32_t subj_end   = subj_offsets[tid + 1];
-    const int      subj_len   = (int)(subj_end - subj_start);
+    const uint32_t s0 = subj_offsets[tid];
+    const int      sl = (int)(subj_offsets[tid + 1] - s0);
+    const int      n  = num_subjects;
 
-    int16_t* H = work_H + (size_t)tid * query_len;
-    int16_t* E = work_E + (size_t)tid * query_len;
     for (int j = 0; j < query_len; j++) {
-        H[j] = 0;
-        E[j] = SABER_NEG_INF;
+        work_H[(long long)j * n + tid] = 0;
+        work_E[(long long)j * n + tid] = SABER_NEG_INF;
     }
 
-    int32_t max_score = 0;
-
-    const int16_t go     = (int16_t)gap_open;
-    const int16_t ge     = (int16_t)gap_extend;
-    const int16_t ms     = (int16_t)match_score;
-    const int16_t mm     = (int16_t)mismatch_penalty;
-
-    for (int i = 0; i < subj_len; i++) {
-        const uint8_t s = subjects[subj_start + i];
-        int16_t H_diag = 0;
-        int16_t H_left = 0;
-        int16_t F      = SABER_NEG_INF;
-
+    int32_t best = 0;
+    for (int i = 0; i < sl; i++) {
+        const uint8_t sr = subjects[s0 + i];
+        const int sc = (sr < SABER_ALPHABET_SIZE) ? (int)sr : 22;
+        int32_t h_diag = 0;              // H[i-1][j-1]
+        int32_t h_left = 0;              // H[i][j-1]
+        int32_t f      = SABER_NEG_INF;  // F[i][j-1]
         for (int j = 0; j < query_len; j++) {
-            const uint8_t q = query[j];
-            // N (encoded as 4) treats as mismatch against everything.
-            const int16_t score_here = (s == q && s < 4) ? ms : mm;
-
-            const int16_t next_diag = H[j];
-
-            int16_t e_ext  = E[j] - ge;
-            int16_t e_open = H[j] - go;
-            int16_t e      = (e_ext > e_open) ? e_ext : e_open;
-
-            int16_t f_ext  = F - ge;
-            int16_t f_open = H_left - go;
-            int16_t f      = (f_ext > f_open) ? f_ext : f_open;
-
-            int16_t h = H_diag + score_here;
+            const long long at = (long long)j * n + tid;
+            const uint8_t qr = query[j];
+            const int qc = (qr < SABER_ALPHABET_SIZE) ? (int)qr : 22;
+            const int32_t h_up = work_H[at];  // H[i-1][j]
+            int32_t e = work_E[at] - gap_extend;
+            const int32_t eo = h_up - gap_open;
+            if (eo > e) e = eo;
+            int32_t ff = f - gap_extend;
+            const int32_t fo = h_left - gap_open;
+            if (fo > ff) ff = fo;
+            int32_t h = h_diag + s_sub[qc * SABER_ALPHABET_SIZE + sc] + (int32_t)bias[j];
             if (e > h) h = e;
-            if (f > h) h = f;
+            if (ff > h) h = ff;
             if (h < 0) h = 0;
-
-            H[j]    = h;
-            E[j]    = e;
-            F       = f;
-            H_diag  = next_diag;
-            H_left  = h;
-
-            if ((int32_t)h > max_score) max_score = (int32_t)h;
+            work_H[at] = h;
+            work_E[at] = e;
+            f = ff;
+            h_diag = h_up;
+            h_left = h;
+            if (h > best) best = h;
         }
     }
-
-    scores[tid] = max_score;
-}
-
-// ---------------------------------------------------------------------------
-// K-mer prefilter kernel: count how many query k-mer hashes appear in
-// each subject. Used by the host to rank candidates before running full SW.
-//
-// Inputs:
-//   - query_kmer_hashes: sorted array of unique k-mer hashes from the query
-//   - subjects, subj_offsets, num_subjects: as above (but raw, not encoded)
-//   - k: k-mer length (typically 3-5 for protein, 11-15 for nucleotide)
-//   - alphabet_size: 24 for protein, 5 for nucleotide
-//
-// Output: hit_counts[num_subjects] = # of query k-mers that occur in subject.
-//
-// Implementation: each thread handles one subject. For each k-mer in the
-// subject, it hashes and binary-searches the query k-mer table. O(L log N)
-// per subject where L = subject length, N = # query k-mers. For typical
-// protein queries (N ~= 100-1000), this is fast on GPU.
-// ---------------------------------------------------------------------------
-extern "C" __global__ void saber_prefilter_count(
-    const uint64_t* __restrict__ query_kmer_hashes,
-    int32_t                      num_query_kmers,
-    const uint8_t* __restrict__  subjects,
-    const uint32_t* __restrict__ subj_offsets,
-    int32_t                      num_subjects,
-    int32_t                      k,
-    int32_t                      alphabet_size,
-    uint32_t* __restrict__       hit_counts
-) {
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= num_subjects) return;
-
-    const uint32_t subj_start = subj_offsets[tid];
-    const uint32_t subj_end   = subj_offsets[tid + 1];
-    const int      subj_len   = (int)(subj_end - subj_start);
-    if (subj_len < k) {
-        hit_counts[tid] = 0;
-        return;
-    }
-
-    uint32_t hits = 0;
-
-    for (int pos = 0; pos <= subj_len - k; pos++) {
-        // Compute polynomial rolling hash matching host-side encoding.
-        uint64_t h = 0;
-        for (int kk = 0; kk < k; kk++) {
-            uint8_t b = subjects[subj_start + pos + kk];
-            h = h * (uint64_t)alphabet_size + (uint64_t)b;
-        }
-
-        // Binary search in sorted query_kmer_hashes.
-        int lo = 0, hi = num_query_kmers - 1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >> 1;
-            uint64_t v = query_kmer_hashes[mid];
-            if (v == h) { hits++; break; }
-            if (v < h) lo = mid + 1;
-            else hi = mid - 1;
-        }
-    }
-
-    hit_counts[tid] = hits;
+    scores[tid] = best;
 }

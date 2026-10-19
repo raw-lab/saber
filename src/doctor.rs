@@ -26,9 +26,15 @@
 use std::fmt;
 use std::path::Path;
 
-use crate::algorithm::index::KmerIndex;
+use crate::algorithm::reference::sw_reference;
+use crate::algorithm::sw_simd::{score_many, KernelCounters, SimdScratch};
 use crate::algorithm::SmithWaterman;
+use crate::alphabet::{EncodedProtein, ProteinCodes, SeedAlphabet, SeedShape};
+use crate::masking::MaskingMode;
+use crate::scoring::stats::{gapped_protein, GapConvention, GapCosts, SearchStatistics};
 use crate::scoring::{ScoreMatrix, ScoringSystem};
+use crate::search::engine::{Engine, SearchParams, Worker};
+use crate::search::index::{BuildOptions, IndexBuilder, SeedConfig, SeedIndex};
 
 /// Outcome of a single diagnostic check.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -145,8 +151,10 @@ pub fn run(opts: &DoctorOptions) -> Report {
     check_build(&mut r, opts);
     check_cpu_features(&mut r);
     check_scoring_matrices(&mut r);
+    check_statistics(&mut r);
     check_sw_kernel(&mut r);
-    check_indexed_vs_bruteforce(&mut r);
+    check_simd_vs_reference(&mut r);
+    check_indexed_vs_exhaustive(&mut r);
     check_persistent_index(&mut r);
     check_temp_writable(&mut r);
     check_gpu(&mut r, opts);
@@ -164,246 +172,247 @@ fn check_build(r: &mut Report, opts: &DoctorOptions) {
         "build / version",
         Status::Pass,
         format!(
-            "SABER v{} ({}-bit, {} target, {} thread(s) configured)",
+            "SABER v{} ({}-bit, {} target, {} thread(s) configured, index format v{})",
             crate::VERSION,
             (std::mem::size_of::<usize>() * 8),
             std::env::consts::ARCH,
             opts.threads.max(1),
+            crate::search::index::FORMAT_VERSION,
         ),
     );
 }
 
 fn check_cpu_features(r: &mut Report) {
-    // AVX2 drives the inter-sequence SIMD Smith-Waterman; without it the code
-    // still runs (scalar fallback) but ~10-30× slower. This is the single
-    // most common "why is SABER slow on this box" cause, so we surface it
-    // explicitly. Non-x86 architectures skip (the scalar path is correct).
     #[cfg(target_arch = "x86_64")]
     {
         let avx2 = is_x86_feature_detected!("avx2");
-        let avx512 = is_x86_feature_detected!("avx512f");
-        let sse41 = is_x86_feature_detected!("sse4.1");
-        if avx2 {
-            r.push(
-                "CPU SIMD (AVX2)",
-                Status::Pass,
-                format!(
-                    "AVX2 present (sse4.1={}, avx512f={}) — fast SIMD SW path active",
-                    sse41, avx512
-                ),
-            );
+        let popcnt = is_x86_feature_detected!("popcnt");
+        let bmi1 = is_x86_feature_detected!("bmi1");
+        if avx2 && popcnt && bmi1 {
+            r.push("CPU SIMD (AVX2)", Status::Pass, "AVX2/POPCNT/BMI1 present — SIMD seed filter, scoring and banded traceback active");
         } else {
             r.push(
                 "CPU SIMD (AVX2)",
                 Status::Warn,
-                "AVX2 NOT detected — SABER will use the scalar SW fallback (much slower). \
-                 Check that the binary was not built with a restrictive target-cpu, and that \
-                 the host actually supports AVX2."
-                    .to_string(),
+                format!("AVX2={avx2} POPCNT={popcnt} BMI1={bmi1}: scalar fallbacks are used (identical results, much slower)"),
             );
         }
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        r.push(
-            "CPU SIMD (AVX2)",
-            Status::Skip,
-            format!("non-x86_64 architecture ({}); scalar SW path is used", std::env::consts::ARCH),
-        );
+        r.push("CPU SIMD (AVX2)", Status::Skip, format!("non-x86_64 architecture ({}); scalar kernels are used", std::env::consts::ARCH));
     }
 }
 
 fn check_scoring_matrices(r: &mut Report) {
-    // Load each built-in matrix and verify it is square-symmetric over the
-    // 20 standard residues (a corrupted/edited matrix would break scoring).
     let systems = [
         ("BLOSUM62", ScoringSystem::Blosum62),
         ("BLOSUM45", ScoringSystem::Blosum45),
+        ("BLOSUM50", ScoringSystem::Blosum50),
         ("BLOSUM80", ScoringSystem::Blosum80),
+        ("BLOSUM90", ScoringSystem::Blosum90),
         ("PAM30", ScoringSystem::Pam30),
         ("PAM70", ScoringSystem::Pam70),
         ("PAM250", ScoringSystem::Pam250),
     ];
     let mut bad: Vec<String> = Vec::new();
-    let mut loaded = 0usize;
     for (name, sys) in systems {
         let m = ScoreMatrix::new(sys);
-        loaded += 1;
-        // Symmetry over the 20 standard amino acids (indices 0..20).
-        let mut symmetric = true;
-        'outer: for i in 0..20 {
-            for j in 0..20 {
-                if m.matrix[i][j] != m.matrix[j][i] {
-                    symmetric = false;
-                    break 'outer;
-                }
-            }
-        }
+        let symmetric = (0..24).all(|i| (0..24).all(|j| m.matrix[i][j] == m.matrix[j][i]));
         if !symmetric {
             bad.push(name.to_string());
         }
     }
     if bad.is_empty() {
-        r.push(
-            "scoring matrices",
-            Status::Pass,
-            format!("{} built-in matrices load and are symmetric", loaded),
-        );
+        r.push("scoring matrices", Status::Pass, format!("{} built-in matrices load and are symmetric", systems.len()));
     } else {
-        r.push(
-            "scoring matrices",
-            Status::Fail,
-            format!("non-symmetric matrix/matrices: {}", bad.join(", ")),
-        );
+        r.push("scoring matrices", Status::Fail, format!("non-symmetric matrix/matrices: {}", bad.join(", ")));
+    }
+}
+
+fn check_statistics(r: &mut Report) {
+    // BLOSUM62 with BLAST gap costs 11/1 (= SABER 12/1) has published gapped
+    // parameters lambda=0.267, K=0.041 (NCBI blast_stat.c).
+    let g = GapCosts::from_user(11, 1, GapConvention::Blast).expect("valid");
+    match gapped_protein(ScoringSystem::Blosum62, g, false) {
+        Ok(k) if (k.lambda - 0.267).abs() < 1e-9 && (k.k - 0.041).abs() < 1e-9 && k.calibrated => {
+            r.push("gapped statistics", Status::Pass, "BLOSUM62 11/1 (BLAST convention): lambda=0.267 K=0.041 from NCBI tables");
+        }
+        Ok(k) => r.push("gapped statistics", Status::Fail, format!("unexpected parameters lambda={} K={}", k.lambda, k.k)),
+        Err(e) => r.push("gapped statistics", Status::Fail, e.to_string()),
     }
 }
 
 fn check_sw_kernel(r: &mut Report) {
-    // Known-answer test. Two identical 8-residue nucleotide sequences with
-    // match=+2 must score exactly 8*2 = 16 with 100% identity and an "8M"
-    // CIGAR. A miscompiled DP, a broken traceback, or a corrupted match score
-    // all show up here.
+    // Known-answer test on the scalar aligner.
     let sw = SmithWaterman::nucleotide(10, 1, 2, -3);
     let res = sw.align(b"ACGTACGT", b"ACGTACGT");
-    let score_ok = res.score == 16;
-    let id_ok = res.identity > 99.9;
-    let cigar_ok = res.cigar == "8M";
-
-    // Self-vs-shifted: an identical pair must out-score an unrelated pair.
     let unrel = sw.align(b"ACGTACGT", b"TTTTTTTT");
-    let order_ok = res.score > unrel.score;
-
-    if score_ok && id_ok && cigar_ok && order_ok {
-        r.push(
-            "Smith-Waterman kernel",
-            Status::Pass,
-            "known-answer test passes (score=16, id=100%, CIGAR=8M, ordering correct)",
-        );
+    if res.score == 16 && res.identity > 99.9 && res.cigar == "8M" && res.score > unrel.score {
+        r.push("Smith-Waterman kernel", Status::Pass, "known-answer test passes (score=16, id=100%, CIGAR=8M)");
     } else {
         r.push(
             "Smith-Waterman kernel",
             Status::Fail,
-            format!(
-                "known-answer MISMATCH: score={} (want 16), id={:.1}% (want 100), cigar={:?} (want 8M), ordering_ok={}",
-                res.score, res.identity, res.cigar, order_ok
-            ),
+            format!("known-answer MISMATCH: score={} id={:.1}% cigar={:?}", res.score, res.identity, res.cigar),
         );
     }
 }
 
-fn check_indexed_vs_bruteforce(r: &mut Report) {
-    // The indexed seed→extend path must find the obvious homolog that a
-    // brute-force all-vs-all SW would. We build a tiny protein DB where two
-    // subjects are clear matches to the query and one is junk, then confirm
-    // the index produces candidates for the matches and not the junk.
-    let subjects: Vec<&[u8]> = vec![
-        b"MVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSF",   // 0: matches query
-        b"WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",   // 1: junk
-        b"MVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSF",   // 2: dup of 0
-    ];
-    let idx = KmerIndex::build_protein(&subjects, 4);
-    let query = b"MVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSF";
-    let hits = idx.query_protein(query);
-    let cands = idx.candidates(&hits, 2, 16, 100);
-    let has0 = cands.iter().any(|c| c.subject_idx == 0);
-    let has2 = cands.iter().any(|c| c.subject_idx == 2);
-    let has_junk = cands.iter().any(|c| c.subject_idx == 1);
+fn rng_seq(state: &mut u64, len: usize, alpha: u64) -> Vec<u8> {
+    (0..len)
+        .map(|_| {
+            *state ^= *state << 13;
+            *state ^= *state >> 7;
+            *state ^= *state << 17;
+            (*state % alpha) as u8
+        })
+        .collect()
+}
 
-    if has0 && has2 && !has_junk {
+fn check_simd_vs_reference(r: &mut Report) {
+    // The production kernel (16-bit SIMD with exact 32-bit repair) against
+    // the independent i64 full-matrix reference, including pairs whose score
+    // exceeds the 16-bit range.
+    let m = ScoreMatrix::new(ScoringSystem::Blosum62);
+    let gaps = GapCosts { open: 11, extend: 1 };
+    let mut st = 0x5eed_u64;
+    let q = rng_seq(&mut st, 180, 20);
+    let mut subs: Vec<Vec<u8>> = (0..40).map(|i| rng_seq(&mut st, 20 + i * 7, 20)).collect();
+    let long = vec![17u8; 3500]; // W×3500: score 38500 > i16::MAX
+    subs.push(long.clone());
+    let views: Vec<ProteinCodes<'_>> = subs.iter().map(|s| ProteinCodes::new_unchecked(s)).collect();
+    let mut sc = SimdScratch::new();
+    let mut kc = KernelCounters::default();
+    let fast = score_many(ProteinCodes::new_unchecked(&q), None, &views[..40], &m.matrix, gaps, &mut sc, &mut kc);
+    let lq = vec![17u8; 3500];
+    let big = score_many(ProteinCodes::new_unchecked(&lq), None, &views[40..], &m.matrix, gaps, &mut sc, &mut kc);
+    let mut bad = 0;
+    for (i, s) in subs[..40].iter().enumerate() {
+        if sw_reference(&q, s, &m.matrix, None, 11, 1).0 != fast[i] as i64 {
+            bad += 1;
+        }
+    }
+    let big_ok = big[0] == 38500;
+    if bad == 0 && big_ok {
         r.push(
-            "indexed search vs brute force",
+            "SIMD kernel vs reference",
             Status::Pass,
-            "seed/candidate stage finds both true homologs and rejects the decoy",
+            format!("41 pairs identical to the i64 reference ({} saturated lane(s) repaired exactly)", kc.saturation_retries),
         );
     } else {
+        r.push("SIMD kernel vs reference", Status::Fail, format!("{bad} mismatching pair(s); long pair score {} (want 38500)", big[0]));
+    }
+}
+
+fn tiny_db() -> Vec<(String, Vec<u8>)> {
+    let mut st = 0xd0c7_u64;
+    let aa = b"ARNDCQEGHILKMFPSTWYV";
+    let rand = |st: &mut u64, n: usize| -> Vec<u8> { rng_seq(st, n, 20).into_iter().map(|c| aa[c as usize]).collect() };
+    let q = b"MVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSFPTTKTYFPHFDLSHGSAQVKGHGKKVADALTNAVAHVDDMPNALSALSDLHAHKLRVDPVNFKLLSHCLLVTLAAHLPAEFTPAVHASLDKFLASVSTVLTSKYR".to_vec();
+    let mut db = Vec::new();
+    db.push(("homolog_identical".to_string(), q.clone()));
+    let mut mutated = q.clone();
+    for (i, c) in mutated.iter_mut().enumerate() {
+        if i % 4 == 1 {
+            *c = aa[(i * 7) % 20];
+        }
+    }
+    db.push(("homolog_75pct".to_string(), mutated));
+    for i in 0..30 {
+        db.push((format!("decoy_{i}"), rand(&mut st, 60 + i * 9)));
+    }
+    db.push(("query".to_string(), q));
+    db
+}
+
+fn build_tiny(db: &[(String, Vec<u8>)], to: Option<&Path>) -> Result<SeedIndex, String> {
+    let mut cfg = SeedConfig::protein_default();
+    cfg.alphabet = SeedAlphabet::murphy10();
+    cfg.shapes = vec![SeedShape::parse("110111")?];
+    cfg.masking = MaskingMode::Tantan;
+    let opt = BuildOptions::new(cfg);
+    let mut b = match to {
+        Some(p) => IndexBuilder::to_file(opt, p).map_err(|e| e.to_string())?,
+        None => IndexBuilder::in_memory(opt).map_err(|e| e.to_string())?,
+    };
+    let mut scratch = Vec::new();
+    for (id, s) in db {
+        b.add_ascii(id, s, &mut scratch).map_err(|e| e.to_string())?;
+    }
+    match to {
+        Some(p) => {
+            b.finish_to_file().map_err(|e| e.to_string())?;
+            SeedIndex::open(p).map_err(|e| e.to_string())
+        }
+        None => b.finish_in_memory().map_err(|e| e.to_string()),
+    }
+}
+
+fn tiny_engine(idx: &SeedIndex, exhaustive: bool) -> Engine<'_> {
+    let gaps = GapCosts::from_user(11, 1, GapConvention::Saber).expect("valid");
+    let kp = gapped_protein(ScoringSystem::Blosum62, gaps, false).expect("calibrated");
+    let st = SearchStatistics::new(kp, idx.total_residues(), idx.num_subjects() as u64);
+    let mut p = SearchParams::default();
+    p.max_target_seqs = 100;
+    p.evalue = 1e-3;
+    p.exhaustive = exhaustive;
+    p.hit_filter_min_ids = 12;
+    Engine::new(idx, ScoreMatrix::new(ScoringSystem::Blosum62), gaps, st, p)
+}
+
+fn check_indexed_vs_exhaustive(r: &mut Report) {
+    let db = tiny_db();
+    let idx = match build_tiny(&db, None) {
+        Ok(i) => i,
+        Err(e) => {
+            r.push("indexed search vs exhaustive", Status::Fail, format!("index build failed: {e}"));
+            return;
+        }
+    };
+    let q = EncodedProtein::from_ascii(&db[db.len() - 1].1);
+    let mut w = Worker::new();
+    let fast = tiny_engine(&idx, false).search(q.as_slice(), &mut w);
+    let full = tiny_engine(&idx, true).search(q.as_slice(), &mut w);
+    let key = |h: &crate::search::engine::Hit| (h.subject, h.score, h.q_start, h.s_start);
+    let same = fast.iter().map(key).collect::<Vec<_>>() == full.iter().map(key).collect::<Vec<_>>();
+    let names: Vec<&str> = fast.iter().map(|h| idx.subject_id(h.subject as usize)).collect();
+    let found = names.contains(&"homolog_identical") && names.contains(&"homolog_75pct") && names.contains(&"query");
+    let decoy = names.iter().any(|n| n.starts_with("decoy"));
+    if same && found && !decoy {
+        r.push("indexed search vs exhaustive", Status::Pass, "seeded search = exhaustive SW on a planted-homolog test (3 hits, no decoys at E<=1e-3)");
+    } else {
         r.push(
-            "indexed search vs brute force",
+            "indexed search vs exhaustive",
             Status::Fail,
-            format!(
-                "candidate mismatch: found subj0={}, subj2={}, junk_wrongly_included={}",
-                has0, has2, has_junk
-            ),
+            format!("identical={same} homologs_found={found} decoy_reported={decoy} (hits: {names:?})"),
         );
     }
 }
 
 fn check_persistent_index(r: &mut Report) {
-    // Build → save → mmap-open → query, and confirm the mapped index returns
-    // exactly the same seed hits and subject metadata as the in-memory one.
-    // This exercises the serialization layout, the 8-byte alignment, and the
-    // mmap reinterpretation end-to-end.
-    let subjects: Vec<&[u8]> = vec![
-        b"MVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSF",
-        b"GSAQVKGHGKKVADALTNAVAHVDDMPNALSALSDLHA",
-        b"MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQ",
-    ];
-    let ids = vec!["sp|A".to_string(), "sp|B".to_string(), "tr|C".to_string()];
-    let lens: Vec<u32> = subjects.iter().map(|s| s.len() as u32).collect();
-
-    let mut mem = KmerIndex::build_protein_windowed(&subjects, 4, 2);
-    mem.set_subject_meta(&ids, &lens);
-
+    let db = tiny_db();
     let mut path = std::env::temp_dir();
     path.push(format!("saber_doctor_{}_{}.sdx", std::process::id(), now_nanos()));
-
-    let save_res = mem.save(&path);
-    if let Err(e) = save_res {
-        r.push("persistent index round-trip", Status::Fail, format!("save failed: {}", e));
-        return;
-    }
-
-    let mapped = match KmerIndex::open(&path) {
-        Ok(m) => m,
-        Err(e) => {
-            let _ = std::fs::remove_file(&path);
-            r.push("persistent index round-trip", Status::Fail, format!("open failed: {}", e));
-            return;
-        }
-    };
-
-    let q = b"MVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSF";
-    let h_mem = mem.query_protein(q);
-    let h_map = mapped.query_protein(q);
-
-    let mut ok = h_mem.len() == h_map.len()
-        && mem.num_subjects() == mapped.num_subjects()
-        && mem.num_postings() == mapped.num_postings()
-        && mapped.has_subject_meta();
-    if ok {
-        for i in 0..subjects.len() {
-            if mem.subject_id(i) != mapped.subject_id(i)
-                || mem.subject_len(i) != mapped.subject_len(i)
-                || mem.encoded_subject(i) != mapped.encoded_subject(i)
-            {
-                ok = false;
-                break;
-            }
-        }
-    }
-    if ok {
-        for (a, b) in h_mem.iter().zip(h_map.iter()) {
-            if a.subject_idx != b.subject_idx || a.q_pos != b.q_pos || a.s_pos != b.s_pos {
-                ok = false;
-                break;
-            }
-        }
-    }
-
-    let sz = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let res = (|| -> Result<(bool, u64), String> {
+        let mem = build_tiny(&db, None)?;
+        let mapped = build_tiny(&db, Some(&path))?;
+        mapped.verify_checksums().map_err(|e| e.to_string())?;
+        mapped.verify_alphabet().map_err(|e| e.to_string())?;
+        let q = EncodedProtein::from_ascii(&db[db.len() - 1].1);
+        let mut w = Worker::new();
+        let a = tiny_engine(&mem, false).search(q.as_slice(), &mut w);
+        let b = tiny_engine(&mapped, false).search(q.as_slice(), &mut w);
+        let same = a.len() == b.len()
+            && a.iter().zip(&b).all(|(x, y)| x.subject == y.subject && x.score == y.score && x.cigar() == y.cigar())
+            && (0..mem.num_subjects()).all(|i| mem.subject_id(i) == mapped.subject_id(i) && mem.subject_codes(i) == mapped.subject_codes(i));
+        Ok((same, std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0)))
+    })();
     let _ = std::fs::remove_file(&path);
-
-    if ok {
-        r.push(
-            "persistent index round-trip",
-            Status::Pass,
-            format!("save→mmap-open→query is faithful ({} bytes, {} subjects)", sz, mapped.num_subjects()),
-        );
-    } else {
-        r.push(
-            "persistent index round-trip",
-            Status::Fail,
-            "mmap'd index disagrees with in-memory index (serialization/mmap bug)",
-        );
+    match res {
+        Ok((true, sz)) => r.push("persistent index round-trip", Status::Pass, format!("build→write→mmap→verify→search is faithful ({sz} bytes)")),
+        Ok((false, _)) => r.push("persistent index round-trip", Status::Fail, "mapped index search differs from the in-memory index"),
+        Err(e) => r.push("persistent index round-trip", Status::Fail, e),
     }
 }
 
@@ -429,36 +438,40 @@ fn check_temp_writable(r: &mut Report) {
 }
 
 fn check_gpu(r: &mut Report, opts: &DoctorOptions) {
-    // Report the GPU situation honestly: whether CUDA was compiled in, and
-    // (only if requested) whether a device actually initializes.
     if !opts.cuda_compiled {
         let status = if opts.gpu_requested { Status::Warn } else { Status::Skip };
         let detail = if opts.gpu_requested {
-            "--gpu requested but this binary was built WITHOUT --features gpu-cuda; \
-             rebuild with the CUDA toolkit present to enable GPU. Running on CPU."
-                .to_string()
+            "--gpu requested but this binary was built WITHOUT --features gpu-cuda; searches run on the CPU"
         } else {
-            "binary built without --features gpu-cuda (CPU-only build)".to_string()
+            "binary built without --features gpu-cuda (CPU-only build)"
         };
-        r.push("GPU backend", status, detail);
+        r.push("GPU backend", status, detail.to_string());
         return;
     }
-
-    // CUDA was compiled in — try to bring up a device.
-    match crate::gpu::try_init_gpu() {
-        Some(exec) => r.push(
-            "GPU backend",
-            Status::Pass,
-            format!("CUDA device available (backend: {})", exec.backend_name()),
-        ),
-        None => {
-            let status = if opts.gpu_requested { Status::Warn } else { Status::Skip };
-            r.push(
-                "GPU backend",
-                status,
-                "CUDA compiled in but no usable device initialized; SABER will run on CPU".to_string(),
-            );
+    let Some(be) = crate::gpu::try_init_backend() else {
+        let status = if opts.gpu_requested { Status::Warn } else { Status::Skip };
+        r.push("GPU backend", status, "CUDA compiled in but no device initialised; searches run on the CPU".to_string());
+        return;
+    };
+    // Score parity: the GPU must reproduce the CPU kernel exactly.
+    let m = ScoreMatrix::new(ScoringSystem::Blosum62);
+    let gaps = GapCosts { open: 11, extend: 1 };
+    let mut st = 0x6e0_u64;
+    let q = rng_seq(&mut st, 250, 24);
+    let bias: Vec<i8> = (0..q.len()).map(|i| (i % 5) as i8 - 2).collect();
+    let wins: Vec<Vec<u8>> = (0..300).map(|i| rng_seq(&mut st, 1 + (i * 13) % 700, 24)).collect();
+    let views: Vec<&[u8]> = wins.iter().map(|w| w.as_slice()).collect();
+    let pv: Vec<ProteinCodes<'_>> = wins.iter().map(|w| ProteinCodes::new_unchecked(w)).collect();
+    let mut sc = SimdScratch::new();
+    let mut kc = KernelCounters::default();
+    let cpu = score_many(ProteinCodes::new_unchecked(&q), Some(&bias), &pv, &m.matrix, gaps, &mut sc, &mut kc);
+    match be.score_windows(&q, Some(&bias), &views, &m.matrix, gaps) {
+        Ok(g) if g == cpu => r.push("GPU backend", Status::Pass, format!("{}: 300 windows score-identical to the CPU kernel", be.name())),
+        Ok(g) => {
+            let n = g.iter().zip(&cpu).filter(|(a, b)| a != b).count();
+            r.push("GPU backend", Status::Fail, format!("{}: {n} of 300 scores differ from the CPU kernel — do not use --gpu", be.name()))
         }
+        Err(e) => r.push("GPU backend", Status::Fail, format!("{}: scoring failed: {e}", be.name())),
     }
 }
 
@@ -496,26 +509,27 @@ fn check_user_files(r: &mut Report, opts: &DoctorOptions) {
     }
 
     if let Some(idx_path) = opts.db_index {
-        match KmerIndex::open(idx_path) {
-            Ok(idx) => {
-                if !idx.has_subject_meta() {
-                    r.push(
-                        "persistent --db index",
-                        Status::Warn,
-                        format!("{}: opens but lacks subject metadata; rebuild with current SABER", idx_path.display()),
-                    );
-                } else {
-                    r.push(
-                        "persistent --db index",
-                        Status::Pass,
-                        format!(
-                            "{}: valid (k={}, {} subjects, {} postings)",
-                            idx_path.display(), idx.k(), idx.num_subjects(), idx.num_postings()
-                        ),
-                    );
-                }
-            }
-            Err(e) => r.push("persistent --db index", Status::Fail, format!("{}: {}", idx_path.display(), e)),
+        match SeedIndex::open(idx_path).and_then(|idx| {
+            idx.verify_checksums()?;
+            idx.verify_alphabet()?;
+            Ok(idx)
+        }) {
+            Ok(idx) => r.push(
+                "persistent --db index",
+                Status::Pass,
+                format!(
+                    "{}: valid v{} index ({:?}, {} subjects, {} residues, {} partition(s), seeds {} {:?}, checksums OK)",
+                    idx_path.display(),
+                    idx.meta().format_version,
+                    idx.kind(),
+                    idx.num_subjects(),
+                    idx.total_residues(),
+                    idx.num_partitions(),
+                    idx.seed_config().alphabet.name,
+                    idx.seed_config().shapes.iter().map(|s| s.pattern.clone()).collect::<Vec<_>>()
+                ),
+            ),
+            Err(e) => r.push("persistent --db index", Status::Fail, format!("{}: {e}", idx_path.display())),
         }
     }
 }
@@ -543,8 +557,10 @@ mod tests {
         // assertion since those legitimately vary.
         let mut r = Report::default();
         check_scoring_matrices(&mut r);
+        check_statistics(&mut r);
         check_sw_kernel(&mut r);
-        check_indexed_vs_bruteforce(&mut r);
+        check_simd_vs_reference(&mut r);
+        check_indexed_vs_exhaustive(&mut r);
         check_persistent_index(&mut r);
         check_temp_writable(&mut r);
         assert_eq!(r.n_fail(), 0, "core doctor checks must not fail:\n{}", r.render());

@@ -72,7 +72,7 @@ impl NeighborhoodGenerator {
 
     /// Generate all k-mer hashes whose alignment score against `query_kmer`
     /// is ≥ threshold. Hashes use `alphabet_size`-radix encoding (same as
-    /// [`crate::algorithm::index::KmerIndex`]). Output is appended to `out`.
+    /// [`crate::search::index::SeedConfig::code_at`]). Output is appended to `out`.
     ///
     /// `query_kmer` must contain encoded residues 0..20 (ambiguous residues
     /// like X cause the k-mer to be skipped entirely — returns without

@@ -1,10 +1,10 @@
 [package]
 name = "saber-sw"
-version = "1.0.2"
+version = "1.3.0"
 edition = "2021"
-rust-version = "1.71"
+rust-version = "1.75"
 authors = ["Richard Allen White III <rwhit101@charlotte.edu>"]
-description = "SABER: GPU-accelerated Smith-Waterman homology search with BLAST-like output"
+description = "SABER: seeded Smith-Waterman homology search (AVX2, calibrated E-values) with BLAST-like output"
 license = "CC-BY-NC-4.0"
 homepage = "https://github.com/raw-lab/saber"
 repository = "https://github.com/raw-lab/saber"
@@ -74,3 +74,28 @@ opt-level = 1
 [[example]]
 name = "bench_simd"
 path = "examples/bench_simd.rs"
+
+[[example]]
+name = "mask_probs"
+path = "examples/mask_probs.rs"
+
+[[example]]
+name = "engine_probe"
+path = "examples/engine_probe.rs"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
+
+[[example]]
+name = "bench_kernels"
+path = "examples/bench_kernels.rs"
+
+[[example]]
+name = "gpu_vectors"
+path = "examples/gpu_vectors.rs"
+
+[[example]]
+name = "bench_banded"
+path = "examples/bench_banded.rs"

@@ -1,0 +1,53 @@
+SABER 1.2.0 binary used for every SABER 1.2 row: sha256 f2da505c17db56df991a4ca01a028c9e9fa1c655c76d447e007cf9f0cf98cfee
+(rustc 1.75.0, cargo build --release; built from the saber-1.2.0 source as of the
+benchmark run; the changes made afterwards are listed at the end of this file).
+
+The session's container moved twice during the final run (2026-10-18), so the
+results come from three 2-vCPU virtual machines. Every section was measured
+completely on one of them, and every timing record carries `cpu` and `host`:
+  host A1  until 21:15   Intel(R) Xeon(R) Processor @ 2.80GHz, 33 MiB L3   scop, decoy, mmseqs, index
+  host B   21:18-21:44   Intel(R) Xeon(R) Processor @ 2.10GHz, 260 MiB L3  multi, threads, sweep
+  host A2  from 21:47    Intel(R) Xeon(R) Processor @ 2.80GHz, 33 MiB L3   translated, lowc
+                         (same CPU model as A1, different VM instance)
+environment_hostA1.txt and environment_hostA2.txt were written by the env
+section on A1 and A2; environment_hostB.txt was recorded by hand on B. Records written before runbench.py stored the CPU were
+labelled from their timestamps. Baseline (SABER 1.0.2, 1.1.0) and DIAMOND
+2.2.8 rows of the A1 sections were measured earlier on A1 with identical
+commands and reused (REUSE=1); every SABER 1.2 row was re-measured with the
+binary above. Compare timings only within a section.
+
+Source changes after the benchmark run, made in response to an independent
+review of the release (none touches seeding, scoring or statistics):
+  * traceback fallback (src/search/engine.rs): when the band over a candidate
+    region's diagonals would exceed the traceback memory cap, the traceback is
+    redone from a band around the optimum's end cell (found by a score-only
+    pass) instead of reporting the best partial alignment. Changes 9 of the
+    4,712 long-protein alignments (all to higher scores; e.g. an 8,081-residue
+    self-alignment that the benchmarked binary reported as a 583-bit repeat
+    alignment) and no output of any other benchmark workload (none of them hit
+    the cap); counter end_anchored_tracebacks
+  * SAM NM = mismatches + inserted and deleted residues (src/io/output.rs)
+  * --mismatch accepts negative values as a separate argument (src/bin/main.rs)
+  * --outfmt bam prints a note that it writes SAM text (src/bin/main.rs)
+  * --genetic-code archaeal = NCBI table 11; table 15 = blepharisma / 15
+    (src/algorithm/translation.rs)
+  * --doctor checks all 8 matrices (src/doctor.rs)
+  * regression tests for the above; example scripts, Makefile, docs
+The delivered source, built here with rustc 1.75.0 (cargo build --release),
+gives sha256 b71102daf1891d4a70d2034beede564895ff12ea2c775135cecc808d5737fbbb
+(the hash depends on the build path). Re-running 15 benchmark commands with it
+reproduced the saved outputs of the benchmarked binary byte for byte for 14:
+SCOP40 very-fast, fast, default, more-sensitive and legacy (36,311-106,215
+lines each), MMseqs2 default, sensitive and --db, shuffled-decoy default,
+blastx (115,378 lines), tblastn, two-domain queries and the low-complexity
+set; the --db SCOP40 search equals the in-memory one. The 15th, long proteins,
+differs in the 9 alignments above. results/recheck/ times the delivered build
+against DIAMOND in one session (results/summary.md, "Re-check").
+
+Full SHA-256 of the binaries:
+  121238687989fe69e222c932d9eccb62a6cb2815710a938dd1b454071511d59a  SABER 1.0.2 (saber-1.0.2-u64-offsets.tar.gz, rustc 1.75.0)
+  452b3281f146818e93fc54126c6620661fdd14ee4fef7ae14691966152a42e6e  SABER 1.1.0 (saber-optimized-v1.1.0.tar.gz, rustc 1.75.0)
+  f2da505c17db56df991a4ca01a028c9e9fa1c655c76d447e007cf9f0cf98cfee  SABER 1.2.0, benchmarked build
+  b71102daf1891d4a70d2034beede564895ff12ea2c775135cecc808d5737fbbb  SABER 1.2.0, delivered source (after the changes above)
+  63442e7ddbc59ec31d29473932aaeb41f361a0872b40fa4528264d58b638b788  SABER 1.2.0 development build before the performance changes (results/devcheck)
+  d3d72578fa97e87cc0846a06d2f9d7dc481a2106265f9546bc91512972fcd1f1  DIAMOND 2.2.8 (official Linux binary)

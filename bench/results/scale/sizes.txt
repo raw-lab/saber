@@ -1,0 +1,3 @@
+-rw-r--r-- 1 root root  40690880 Oct 19 14:26 /home/claude/bench/final13/scale/scale.dmnd
+-rw-r--r-- 1 root root  43983827 Oct 19 14:26 /home/claude/bench/final13/scale/scale.sdx
+-rw-r--r-- 1 root root 183298099 Oct 19 14:26 /home/claude/bench/final13/scale/scale.v12.sdx

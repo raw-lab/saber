@@ -1,0 +1,8 @@
+-rw-r--r-- 1 root root 11755080 Oct 18 17:09 /home/claude/bench/final/index/mmseqs_DB.dmnd
+-rw-r--r-- 1 root root 43091108 Oct 18 20:33 /home/claude/bench/final/index/mmseqs_DB.sdx
+-rw-r--r-- 1 root root 25671747 Oct 18 20:33 /home/claude/bench/final/index/mmseqs_DB.v110.sdx
+mmseqs_DB: query-major == partition-major output
+-rw-r--r-- 1 root root  39883840 Oct 18 17:12 /home/claude/bench/final/index/db400.dmnd
+-rw-r--r-- 1 root root 175243442 Oct 18 20:34 /home/claude/bench/final/index/db400.sdx
+-rw-r--r-- 1 root root 156758132 Oct 18 20:34 /home/claude/bench/final/index/db400.v110.sdx
+db400: query-major == partition-major output

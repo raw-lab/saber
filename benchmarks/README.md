@@ -1,3 +1,8 @@
+> **Historical (SABER ≤ 1.1.0).** These are the earlier releases' own benchmark
+> notes and numbers, kept for reference; they were not re-measured for 1.2.0
+> or 1.3.0. The current benchmark suite, protocol and results are in `bench/`
+> and `bench/results/summary.md` (1.2.0's in `bench/results/v1.2.0/`).
+
 # Real-Biology Benchmark
 
 This directory contains the head-to-head benchmark of SABER v1.0.0 against

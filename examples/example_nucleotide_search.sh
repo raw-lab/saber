@@ -1,101 +1,35 @@
-#!/bin/bash
-# Example: Nucleotide-to-Nucleotide Search (N-N mode)
-# DNA/RNA sequence similarity searching
+#!/usr/bin/env bash
+# Nucleotide-vs-nucleotide search (--mode nn, blastn-like) on the bundled example data.
+#
+# Run from anywhere after `cargo build --release`.
+#   SABER=/path/to/saber   use another binary (default: ./target/release/saber)
+#   OUT=/some/dir          keep the outputs there (default: a new temporary directory)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+SABER="${SABER:-./target/release/saber}"
+OUT="${OUT:-$(mktemp -d)}"
+mkdir -p "$OUT"
+Q=examples/nucleotide_query.fa
+DB=examples/nucleotide_db.fa
+[ -x "$SABER" ] || { echo "saber not found at $SABER (run: cargo build --release)" >&2; exit 1; }
+echo "outputs: $OUT"
 
-set -e
+echo "== 1. default nn search: match 2, mismatch -3, gaps 7/2, contiguous 11-mer seeds"
+"$SABER" --mode nn -q "$Q" -d "$DB" -o "$OUT/nn.m8"
+cat "$OUT/nn.m8"
 
-SABER="./target/release/saber"
-QUERIES="examples/data/dna_queries.fasta"
-DATABASE="examples/data/genome_ref.fasta"
+echo "== 2. high-identity hits only (>= 98 % identity, E <= 1e-50)"
+"$SABER" --mode nn -q "$Q" -d "$DB" --percent-identity 98 -E 1e-50 -o "$OUT/nn_strict.m8"
+cat "$OUT/nn_strict.m8"
 
-echo "================================================"
-echo "SABER Example: Nucleotide-to-Nucleotide Search"
-echo "================================================"
+echo "== 3. scoring for diverged sequences: match 1, mismatch -2, gaps 2/2 (BLAST convention)"
+# Combinations without published gapped constants are rejected unless
+# --allow-uncalibrated-evalues is given (E-values are then marked UNCALIBRATED).
+"$SABER" --mode nn -q "$Q" -d "$DB" --match 1 --mismatch -2 -g 2 -e 2 --gap-convention blast -o "$OUT/nn_diverged.m8"
+cat "$OUT/nn_diverged.m8"
 
-# Standard DNA search
-echo "Running DNA sequence search..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    --mode nn \
-    --match 2 \
-    --mismatch -3 \
-    -g 5 \
-    -e 2 \
-    -v 1e-10 \
-    -o results_nn.m8 \
-    --outfmt m8 \
-    -t auto \
-    --verbose
+echo "== 4. SAM output (see example_sam_output.sh for samtools post-processing)"
+"$SABER" --mode nn -q "$Q" -d "$DB" --outfmt sam -o "$OUT/nn.sam"
+head -n 4 "$OUT/nn.sam" | cut -c1-120
 
-echo "Results saved to: results_nn.m8"
-head -5 results_nn.m8
-
-# Relaxed search for more distant matches
-echo ""
-echo "Running relaxed DNA search (longer gaps allowed)..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    --mode nn \
-    --match 1 \
-    --mismatch -4 \
-    -g 8 \
-    -e 1 \
-    -v 1e-5 \
-    -o results_nn_relaxed.m8 \
-    --outfmt m8
-
-echo "Relaxed search results saved to: results_nn_relaxed.m8"
-
-# Search for very high identity matches only
-echo ""
-echo "Running strict high-identity search..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    --mode nn \
-    --match 5 \
-    --mismatch -10 \
-    -g 15 \
-    -e 2 \
-    -v 1e-50 \
-    --percent-identity 98.0 \
-    -o results_nn_strict.m8 \
-    --outfmt m8
-
-echo "Strict search results saved to: results_nn_strict.m8"
-
-# SAM output for read mapping workflows
-echo ""
-echo "Generating SAM format output..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    --mode nn \
-    --match 2 \
-    --mismatch -3 \
-    -o alignments.sam \
-    --outfmt sam \
-    -t auto
-
-echo "SAM output saved to: alignments.sam"
-
-# BAM output (indexed binary format, requires htslib)
-echo ""
-echo "Generating BAM format output..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    --mode nn \
-    -o alignments.bam \
-    --outfmt bam \
-    --bam-index
-
-echo "BAM output saved to: alignments.bam"
-echo "BAM index saved to: alignments.bam.bai"
-
-echo ""
-echo "================================================"
-echo "Examples completed successfully!"
-echo "================================================"
+echo "done: $OUT"

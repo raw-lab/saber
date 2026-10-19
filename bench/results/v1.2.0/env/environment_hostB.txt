@@ -1,0 +1,8 @@
+host B (2026-10-18 21:18-21:44; sections multi, threads, sweep)
+Recorded during the session from lscpu and /proc/cpuinfo (the env section did
+not run on this machine; binaries and datasets were the same files as on A1/A2):
+cpu:  Intel(R) Xeon(R) Processor @ 2.10GHz (cpuinfo model 207, cache size 266240 KB)
+caches: L1d 96 KiB (2 instances), L1i 64 KiB (2 instances), L2 4 MiB (2 instances), L3 260 MiB
+cores: 2
+mem: MemTotal: 8222320 kB
+binaries: see environment_hostA2.txt (identical files, same SHA-256)

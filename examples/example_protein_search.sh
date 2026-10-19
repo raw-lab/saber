@@ -1,113 +1,41 @@
-#!/bin/bash
-# Example: Protein-to-Protein Search (P-P mode)
-# This example demonstrates a standard protein sequence search
+#!/usr/bin/env bash
+# Protein-vs-protein search (--mode pp, blastp-like) on the bundled example data.
+#
+# Run from anywhere after `cargo build --release`.
+#   SABER=/path/to/saber   use another binary (default: ./target/release/saber)
+#   OUT=/some/dir          keep the outputs there (default: a new temporary directory)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+SABER="${SABER:-./target/release/saber}"
+OUT="${OUT:-$(mktemp -d)}"
+mkdir -p "$OUT"
+Q=examples/protein_query.fa
+DB=examples/protein_db.fa
+[ -x "$SABER" ] || { echo "saber not found at $SABER (run: cargo build --release)" >&2; exit 1; }
+echo "outputs: $OUT"
 
-set -e
+echo "== 1. default search: BLOSUM62, gaps 11/1, E <= 10, BLAST tabular output (m8)"
+"$SABER" -q "$Q" -d "$DB" -o "$OUT/pp.m8"
+cat "$OUT/pp.m8"
 
-# Setup
-SABER="./target/release/saber"
-QUERIES="examples/data/protein_queries.fasta"
-DATABASE="examples/data/nr_small.fasta"
-OUTPUT="results_pp.m8"
+echo "== 2. sensitive preset, E <= 1e-3, at most 5 subjects per query"
+"$SABER" -q "$Q" -d "$DB" --preset sensitive -E 1e-3 -k 5 -o "$OUT/pp_sensitive.m8"
+cat "$OUT/pp_sensitive.m8"
 
-echo "================================================"
-echo "SABER Example: Protein-to-Protein Search"
-echo "================================================"
+echo "== 3. BLOSUM45 with NCBI's default gap costs for it (15/2 in the BLAST convention)"
+# Gap costs without published gapped Karlin-Altschul constants are rejected
+# unless --allow-uncalibrated-evalues is given (E-values are then marked).
+"$SABER" -q "$Q" -d "$DB" -m BLOSUM45 -g 15 -e 2 --gap-convention blast -o "$OUT/pp_blosum45.m8"
+cat "$OUT/pp_blosum45.m8"
 
-# Standard protein search with default BLOSUM62
-echo "Running standard protein search..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    -m BLOSUM_62 \
-    -g 10 \
-    -e 1 \
-    -v 10.0 \
-    -a 10 \
-    -o "$OUTPUT" \
-    --outfmt m8 \
-    -t auto \
-    --verbose
+echo "== 4. pairwise text (m0) and JSON output"
+"$SABER" -q "$Q" -d "$DB" -E 1e-5 -k 3 --outfmt m0 -o "$OUT/pp.m0"
+"$SABER" -q "$Q" -d "$DB" --outfmt json -o "$OUT/pp.json"
+head -n 20 "$OUT/pp.m0"
 
-echo ""
-echo "Results saved to: $OUTPUT"
-echo "First 5 results:"
-head -5 "$OUTPUT"
+echo "== 5. persistent index: build once, then search it memory-mapped"
+"$SABER" --makedb "$OUT/protein_db.sdx" -d "$DB"
+"$SABER" -q "$Q" --db "$OUT/protein_db.sdx" --verify-index --stats "$OUT/run.json" -o "$OUT/pp_db.m8"
+cmp "$OUT/pp.m8" "$OUT/pp_db.m8" && echo "indexed search output is identical to the in-memory search"
 
-# Sensitive search with stricter filtering
-echo ""
-echo "Running sensitive search (E-value < 1e-10)..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    -m BLOSUM_62 \
-    -g 11 \
-    -e 1 \
-    -v 0.000000001 \
-    -a 5 \
-    -o results_pp_sensitive.m8 \
-    --outfmt m8 \
-    -t auto
-
-echo "Sensitive results saved to: results_pp_sensitive.m8"
-
-# Fast search with larger candidates
-echo ""
-echo "Running fast search (more candidates)..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    -m BLOSUM_62 \
-    -c 50000 \
-    -T 13 \
-    -o results_pp_fast.m8 \
-    --outfmt m8 \
-    -t auto
-
-echo "Fast search results saved to: results_pp_fast.m8"
-
-# Search with different scoring matrix
-echo ""
-echo "Running with BLOSUM45 (more sensitive)..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    -m BLOSUM_45 \
-    -v 1.0 \
-    -a 10 \
-    -o results_pp_blosum45.m8 \
-    --outfmt m8
-
-echo "BLOSUM45 results saved to: results_pp_blosum45.m8"
-
-# Search with formatted output
-echo ""
-echo "Running with formatted output (M0 format)..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    -m BLOSUM_62 \
-    -v 1e-5 \
-    -a 3 \
-    -o results_pp_formatted.txt \
-    --outfmt m0
-
-echo "Formatted results saved to: results_pp_formatted.txt"
-
-# JSON output for programmatic processing
-echo ""
-echo "Running with JSON output..."
-$SABER \
-    -i "$QUERIES" \
-    -d "$DATABASE" \
-    -m BLOSUM_62 \
-    -o results_pp.json \
-    --outfmt json \
-    -a 10
-
-echo "JSON results saved to: results_pp.json"
-
-echo ""
-echo "================================================"
-echo "Examples completed successfully!"
-echo "================================================"
+echo "done: $OUT"

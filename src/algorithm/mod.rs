@@ -5,9 +5,12 @@ pub mod kmer;
 pub mod translation;
 pub mod prefilter;
 pub mod sw_simd;
-pub mod index;
 pub mod neighborhood;
 pub mod ungapped;
+pub mod reference;
+pub mod banded;
+pub mod band_simd8;
+mod banded_simd;
 
 pub use smith_waterman::{SmithWaterman, AlignmentResult, AlignmentSet, Scoring};
 pub use kmer::{KmerIndex as LegacyKmerIndex, KmerSize};
@@ -17,7 +20,10 @@ pub use translation::{
 };
 pub use prefilter::{PrefilterConfig, PrefilterResult, prefilter as run_prefilter};
 pub use sw_simd::sw_simd_protein_batch;
-pub use index::{KmerIndex, SeedHit, Candidate, DEFAULT_K_PROTEIN, DEFAULT_K_NUCLEOTIDE};
+/// Default contiguous seed length for `--index-k`-style protein seeding.
+pub const DEFAULT_K_PROTEIN: usize = 4;
+/// Default seed length for nucleotide (nn) indexes.
+pub const DEFAULT_K_NUCLEOTIDE: usize = 11;
 pub use neighborhood::NeighborhoodGenerator;
 pub use ungapped::{extend_ungapped, extend_ungapped_with_range, DEFAULT_X_DROP, DEFAULT_HSP_THRESHOLD};
 
