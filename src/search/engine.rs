@@ -1,4 +1,5 @@
-//! The SABER search engine (v1.2; scan schedule and per-subject E-values since v1.3).
+//! The SABER search engine (v1.2; scan schedule and per-subject E-values since v1.3,
+//! region thresholds with a reference database size since v1.4).
 //!
 //! One implementation serves the CLI (`pp`, `nn`, `nx`, `pn` modes) and the
 //! library API. Per query:
@@ -71,9 +72,10 @@ pub struct SearchParams {
     /// Region threshold: a candidate region is kept only if one of its
     /// ungapped segments, or the sum of two or more, reaches this fraction
     /// of the query's exact raw-score floor at `-E` or at
-    /// [`REGION_FLOOR_EVALUE`], whichever is more permissive (a lone segment
-    /// far below the reporting floor rarely grows into a reportable gapped
-    /// alignment). 0 = use `hsp_threshold` alone.
+    /// [`REGION_FLOOR_EVALUE`], whichever is more permissive, for a database
+    /// of at most `ref_db_residues` (a lone segment far below the
+    /// reporting floor rarely grows into a reportable gapped alignment).
+    /// 0 = use `hsp_threshold` alone.
     pub hsp_floor_fraction: f64,
     pub x_drop_ungapped: i32,
     /// Two-hit window (0 = single-hit triggering).
@@ -143,6 +145,17 @@ pub struct SearchParams {
     /// survivors are never held at once (repeat-rich pairs with masking and
     /// the seed-frequency cap disabled). Same results; 0 = default (2^22).
     pub scan_pair_survivors: usize,
+    /// Reference database size (residues) of the heuristics. Above it,
+    /// (1) the region threshold and the two-stage scoring threshold — 
+    /// fractions of the reporting floor at E = 10, which rises with the
+    /// database — use the floor of a database of this size (the E-value of
+    /// the floor scaled by database residues / this), and (2) the floor of
+    /// the automatic seed-frequency cap (`OCC_CAP_FLOOR` occurrences) grows
+    /// in proportion to the database, so that neither whether a (query,
+    /// subject) pair's candidate region is scored nor which query seeds are
+    /// used depends on how large the rest of the database is. Reported
+    /// E-values are not affected. 0 = no reference size (1.3 behaviour).
+    pub ref_db_residues: u64,
 }
 
 impl Default for SearchParams {
@@ -182,6 +195,7 @@ impl Default for SearchParams {
             neighborhood_max_words: 256,
             neighborhood_cache_bytes: 64 << 20,
             scan_pair_survivors: 0,
+            ref_db_residues: REF_DB_RESIDUES,
         }
     }
 }
@@ -490,7 +504,8 @@ pub struct QueryPrep {
     /// Exact raw-score floor implied by -E / --min-bitscore.
     pub floor: i64,
     /// The floor the region threshold is relative to: at
-    /// [`REGION_FLOOR_EVALUE`] or the search's -E, whichever is larger.
+    /// [`Engine::region_evalue`] (E = 10 or the search's -E, whichever is
+    /// larger, for a database of at most the reference size).
     pub region_floor: i64,
 }
 
@@ -501,6 +516,10 @@ pub struct QueryPrep {
 /// candidate regions than the setting the presets were tuned at (`-E 10`), so
 /// it only filters what an `-E 10` search reports.
 pub const REGION_FLOOR_EVALUE: f64 = 10.0;
+
+/// Default [`SearchParams::ref_db_residues`]: 40 M residues, the size of
+/// the at-scale benchmark database the presets were tuned on.
+pub const REF_DB_RESIDUES: u64 = 40_000_000;
 
 /// Search engine bound to one index and one scoring configuration.
 pub struct Engine<'a> {
@@ -564,8 +583,9 @@ impl<'a> Engine<'a> {
                 if params.seed_max_occ > 0 {
                     params.seed_max_occ as u64
                 } else {
-                    // Auto: 64× the mean bucket size, at least OCC_CAP_FLOOR.
-                    super::index::auto_occ_cap(index.meta().total_postings.get(s).copied().unwrap_or(0), cfg.num_codes(s))
+                    // Auto: 64× the mean bucket size, at least OCC_CAP_FLOOR
+                    // (scaled up above the reference database size).
+                    super::index::auto_occ_cap(index.meta().total_postings.get(s).copied().unwrap_or(0), cfg.num_codes(s), stats.db_length, params.ref_db_residues)
                 }
             })
             .collect();
@@ -691,6 +711,20 @@ impl<'a> Engine<'a> {
         v
     }
 
+    /// The E-value whose score floor the region heuristics are relative to:
+    /// E = 10 or `-E`, whichever is larger, scaled up by database residues /
+    /// [`SearchParams::ref_db_residues`] for databases above that size
+    /// (the floor of a reference-size database).
+    pub fn region_evalue(&self) -> f64 {
+        let e = self.params.evalue.max(REGION_FLOOR_EVALUE);
+        let r = self.params.ref_db_residues;
+        if r > 0 && self.stats.db_length > r {
+            e * (self.stats.db_length as f64 / r as f64)
+        } else {
+            e
+        }
+    }
+
     /// Effective ungapped HSP threshold for a query (see `hsp_floor_fraction`).
     fn hsp_threshold_for(&self, prep: &QueryPrep) -> i32 {
         let f = self.params.hsp_floor_fraction;
@@ -741,10 +775,11 @@ impl<'a> Engine<'a> {
         }
         let qstats = self.stats.for_query(qlen.max(1));
         let floor = qstats.min_score(self.params.evalue, self.params.min_bitscore);
-        let region_floor = if self.params.evalue >= REGION_FLOOR_EVALUE && self.params.min_bitscore.is_none() {
+        let re = self.region_evalue();
+        let region_floor = if re == self.params.evalue && self.params.min_bitscore.is_none() {
             floor
         } else {
-            qstats.min_score(self.params.evalue.max(REGION_FLOOR_EVALUE), None)
+            qstats.min_score(re, None)
         };
         w.counters.t_prep_ns += t0.elapsed().as_nanos() as u64;
         QueryPrep { bias, mask, has_bias, qstats, floor, region_floor }
@@ -1024,8 +1059,7 @@ impl<'a> Engine<'a> {
                     // relative to the floor at -E or E = 10, whichever is
                     // lower (as the region threshold): a stringent -E only
                     // filters what an -E 10 search reports
-                    let thr = self.params.score_prefilter_frac
-                        * qs.floor_lower_bound(self.params.evalue.max(REGION_FLOOR_EVALUE), None, n, prep.region_floor);
+                    let thr = self.params.score_prefilter_frac * qs.floor_lower_bound(self.region_evalue(), None, n, prep.region_floor);
                     if sc[k] as f64 >= thr {
                         full_idx.push(i);
                     } else {

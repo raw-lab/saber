@@ -1,14 +1,82 @@
-# Migrating to SABER 1.3
+# Migrating to SABER 1.4
+
+Part I lists the changes from 1.3 to 1.4; parts II (from 1.2 to 1.3) and III
+(from 1.0/1.1 to 1.2) are unchanged from the earlier releases.
+
+## Part I — from 1.3 to 1.4
+
+SABER 1.4 keeps 1.3's command line, presets, output formats, E-values and
+index format. 1.3 indexes are searched by 1.4 and 1.4 indexes by 1.3; the
+files differ only in the version recorded in the index metadata (and the
+checksums covering it).
+
+### I.1 Results change only above 40 M database residues
+
+Two heuristics depended on the size of the whole database, so that in 1.3
+whether a homologue was found could depend on how many *other* sequences the
+database held:
+
+* the region threshold (0.65–0.7 × the query's reporting score floor) and the
+  two-stage scoring threshold (0.75 × a lower bound of that floor) are
+  relative to the floor at E = 10 (or `-E`, if more permissive), and that
+  floor rises with the database;
+* the automatic seed-frequency cap (query seeds whose code occurs more often
+  in the database are skipped) is 64 × the mean occurrences per code, but at
+  least 256 occurrences — a fixed floor, so that, for example, a seed with
+  250 occurrences in a 40 M-residue database and 500 in an 80 M-residue one
+  (whose cap is about 460–480 for the `default` seeds) was used in the first and
+  skipped in the second.
+
+1.4 takes both relative to a **reference database of 40 M residues** (about
+the size of the at-scale benchmark the presets were tuned on, 38.2 M
+residues). Above that size
+the E-value of the floor is scaled by database residues / 40 M, which keeps
+the score floor at its 40 M value, and the cap's floor grows in proportion
+to the database (256 × residues / 40 M).
+
+* Databases up to 40 M residues: the same alignments and E-values as 1.3
+  (the benchmark databases of 11.0, 20.1 and 38.2 M residues give
+  byte-identical output to 1.3.0).
+* Larger databases: more candidate regions are scored and fewer query seeds
+  skipped, so more alignments can be reported (true homologues that 1.3
+  missed, and some additional weak hits). Pairs that 1.3 also reports keep
+  their alignments, bit scores and E-values, except where 1.3 had dropped the
+  region holding the pair's best alignment and reported a weaker one. On the
+  benchmark databases of 74.4 and 146.8 M residues this changed 2 of 52,386
+  and 4 of 50,118 common pairs (for example 87.4 instead of 42.2 bits), and
+  1.4 dropped none of 1.3's pairs. The cost is time: more regions are
+  band-scored and more seed hits examined.
+* The hidden option `--ref-db-residues N` sets the reference size;
+  `--ref-db-residues 0` restores 1.3's behaviour (thresholds relative to the
+  database's own size, a fixed cap floor of 256).
+
+### I.2 Same results, different resource use
+
+* **Memory.** The scan releases the pages of a memory-mapped index's residues
+  after each scanned stretch (`madvise(MADV_DONTNEED)` every 16 MB; Linux
+  only; the page cache keeps them), and the per-query candidate regions stay
+  in their compact form until each query is scored — lower peak resident
+  memory on large databases. An index held in memory (a FASTA database
+  searched directly) is not affected by the first change.
+* **Small query batches.** Batches of up to 262,144 seeds per shape test
+  database positions against a cache-resident presence sketch before the
+  seed tables, and seed codes are computed with independent vector
+  multiply chains: few-query searches of large databases are faster.
+* **Window filter.** The query residues of the window filter are stored as
+  packed bytes (seed letter and residue in one byte), so a hit's two identity
+  counts take one compare each; a custom seed alphabet whose letters, times
+  its largest group rounded up to a power of two, exceed 128 uses the
+  portable filter. The
+  decisions are identical (tested against the query-major schedule for
+  Murphy-10, the full alphabet and an unpackable custom alphabet).
+
+## Part II — from 1.2 to 1.3
 
 SABER 1.3 keeps 1.2's engine, output formats and index format (v4) and
 changes how protein searches are scheduled and tuned. Command lines keep
 working; results change because the presets and the E-value model changed.
-Part I lists the changes from 1.2; part II (unchanged) the changes from
-1.0/1.1 to 1.2.
 
-## Part I — from 1.2 to 1.3
-
-### I.1 Results change: presets, E-values, scoring band
+### II.1 Results change: presets, E-values, scoring band
 
 | | 1.2 | 1.3 |
 |---|---|---|
@@ -23,7 +91,7 @@ Every 1.3 setting can be set back individually (`--seed-shape`,
 `--seed-max-occ 4096`, `--evalue-model database`), but 1.2's presets
 themselves are not kept as named presets.
 
-### I.2 Scheduling: the scan schedule
+### II.2 Scheduling: the scan schedule
 
 Protein searches (blastp, blastx, tblastn) with single-hit seeding now use
 the **scan schedule** by default (`--batch-order auto` = `scan`): seed tables
@@ -71,7 +139,7 @@ database minimizers (`--minimizer-window` > 1), blastn, GPU scoring and
   `--batch-order query` (same alignments, about 0.5 s per query, but about
   95 bytes per residue of index).
 
-### I.3 New and changed options
+### II.3 New and changed options
 
 | Option | |
 |---|---|
@@ -90,7 +158,7 @@ Advanced, hidden options: `--score-prefilter-band N` (first-pass band, presets
 (query residues per scan batch), `--scan-pair-survivors N` (survivors above
 which a (query, subject) pair is scanned on its own, in slices; 4 M).
 
-### I.4 Library API
+### II.4 Library API
 
 `SearchParams` gained `hit_filter_exact_weight`, `score_band`,
 `score_prefilter_band`, `score_prefilter_frac`; `SearchStatistics::with_model`
@@ -101,13 +169,13 @@ queries; `Counters` gained the fields listed above. `presets::Preset` gained
 
 ---
 
-## Part II — from 1.0 / 1.1 to 1.2
+## Part III — from 1.0 / 1.1 to 1.2
 
 SABER 1.2 replaces the search pipeline of 1.0/1.1 with a single engine shared
 by every mode, the CLI and the library. Most command lines keep working
 unchanged; this part lists everything that behaved differently in 1.2 and why.
 
-### II.1 Persistent indexes must be rebuilt
+### III.1 Persistent indexes must be rebuilt
 
 | | 1.0.x / 1.1.x | 1.2 |
 |---|---|---|
@@ -135,7 +203,7 @@ printed); thresholds such as `--hit-filter-ids`, `--hsp-threshold`, `-E`,
 schedules only; the scan schedule seeds with the search's own seeds, see
 I.2.)
 
-### II.2 CLI behaviour changes
+### III.2 CLI behaviour changes
 
 | Option / output | 1.0/1.1 | 1.2 |
 |---|---|---|
@@ -173,7 +241,7 @@ New options: `--preset`, `--gap-convention`, `--allow-uncalibrated-evalues`,
 `--subject-cover`, `--memory-budget`, `--tmpdir`, `--query-batch`,
 `--batch-order`, `--stats`, `--exhaustive`, `--verify-index`.
 
-### II.3 Library API changes
+### III.3 Library API changes
 
 * `algorithm::index::{KmerIndex, SeedHit, Candidate}` were removed: they
   materialised every seed hit before capping candidates. Use

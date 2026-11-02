@@ -1,6 +1,6 @@
 {
  "name": "nx_diamond_very-sensitive",
- "m8": "/home/claude/bench/final13/translated/nx_diamond_very-sensitive.m8",
+ "m8": "/home/claude/bench/final14b/translated/nx_diamond_very-sensitive.m8",
  "subset": "all",
  "n_queries": 11206,
  "n_db": 11206,

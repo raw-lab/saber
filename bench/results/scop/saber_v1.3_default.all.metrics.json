@@ -1,6 +1,6 @@
 {
  "name": "saber_v1.3_default",
- "m8": "/home/claude/bench/final13/scop/saber_v1.3_default.m8",
+ "m8": "/home/claude/bench/final14b/scop/saber_v1.3_default.m8",
  "subset": "all",
  "n_queries": 11206,
  "n_db": 11206,

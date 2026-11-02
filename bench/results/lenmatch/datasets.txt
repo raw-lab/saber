@@ -1,0 +1,1 @@
+/home/claude/bench/derived/scaling/scale_k4L.fa: 255349 sequences (244143 decoys), 37213650 residues

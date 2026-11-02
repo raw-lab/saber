@@ -1,6 +1,6 @@
 {
  "name": "diamond_ultra-sensitive",
- "m8": "/home/claude/bench/final13/scale/diamond_ultra-sensitive.m8",
+ "m8": "/home/claude/bench/final14b/scale/diamond_ultra-sensitive.m8",
  "subset": "all",
  "n_queries": 11206,
  "n_db": 91206,

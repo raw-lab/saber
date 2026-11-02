@@ -1,0 +1,5 @@
+K=1: in-memory index output == prebuilt index output
+K=2: in-memory index output == prebuilt index output
+K=4: in-memory index output == prebuilt index output
+K=8: in-memory index output == prebuilt index output
+K=16: in-memory index output == prebuilt index output

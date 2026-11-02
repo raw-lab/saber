@@ -316,12 +316,23 @@ pub struct IndexMeta {
 pub const SCAN_FREQ_MIN: u64 = 128;
 
 /// Automatic over-frequency cap of a seed shape: 64x the mean number of
-/// database positions per code, at least `OCC_CAP_FLOOR`.
+/// database positions per code, at least `OCC_CAP_FLOOR` (for a database of
+/// at most the reference size; see [`auto_occ_cap`]).
 pub const OCC_CAP_FLOOR: u64 = 256;
 
-/// The automatic cap for `total` seed positions over `ncodes` codes.
-pub fn auto_occ_cap(total: u64, ncodes: u64) -> u64 {
-    ((total as f64 / ncodes.max(1) as f64 * 64.0).ceil() as u64).max(OCC_CAP_FLOOR)
+/// The automatic cap for `total` seed positions over `ncodes` codes in a
+/// database of `db_residues` residues: 64x the mean occurrences per code,
+/// at least `OCC_CAP_FLOOR` × max(1, db_residues / ref_residues) — above the
+/// reference size the floor grows with the database, so that a seed is not
+/// skipped merely because the database is larger (`ref_residues` = 0: a
+/// fixed floor, as in 1.3).
+pub fn auto_occ_cap(total: u64, ncodes: u64, db_residues: u64, ref_residues: u64) -> u64 {
+    let floor = if ref_residues > 0 && db_residues > ref_residues {
+        (OCC_CAP_FLOOR as f64 * db_residues as f64 / ref_residues as f64).ceil() as u64
+    } else {
+        OCC_CAP_FLOOR
+    };
+    ((total as f64 / ncodes.max(1) as f64 * 64.0).ceil() as u64).max(floor)
 }
 
 fn default_scan_freq_min() -> u64 {
@@ -650,6 +661,38 @@ impl SeedIndex {
                 }
             }
         }
+    }
+
+    /// Drop the whole pages of residues `[from, to)` from the process's
+    /// resident memory when the index is memory-mapped (the page cache keeps
+    /// them; a later read faults them back in, with the same contents). The
+    /// scan schedule calls this after each round, so that a search of a
+    /// mapped index does not keep the whole database resident. No effect on
+    /// an index held in memory.
+    pub(crate) fn release_residue_pages(&self, from: usize, to: usize) {
+        #[cfg(target_os = "linux")]
+        if let Storage::Mapped(m) = &self.storage {
+            let (o, l) = self.ranges[self.sec_enc];
+            let (a, b) = (o + from.min(l), o + to.min(l));
+            // SAFETY: sysconf has no preconditions.
+            let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+            let page = if page > 0 { page as usize } else { 4096 };
+            let base = m.as_ptr() as usize;
+            let start = (base + a).div_ceil(page) * page;
+            let end = (base + b) / page * page;
+            if end > start {
+                // SAFETY: [start, end) lies inside the read-only file mapping
+                // (page-aligned inward); MADV_DONTNEED on a file mapping only
+                // drops this process's page references, the data is read
+                // again from the file on the next access. The advice is a
+                // hint; its result is not needed.
+                unsafe {
+                    libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = (from, to);
     }
 
     /// Start offset of every subject in [`Self::residues`] (`num_subjects + 1`
@@ -1887,8 +1930,12 @@ mod tests {
         assert_eq!(v["scan_freq_min"], 1);
         assert_eq!(default_scan_freq_min(), 4096);
         assert!(OCC_CAP_FLOOR > SCAN_FREQ_MIN, "automatic caps must be able to use the stored statistics");
-        assert_eq!(auto_occ_cap(38_000_000, 10_000_000), 256);
-        assert_eq!(auto_occ_cap(38_000_000, 1_000_000), (38.0f64 * 64.0).ceil() as u64);
+        assert_eq!(auto_occ_cap(38_000_000, 10_000_000, 38_200_000, 40_000_000), 256);
+        assert_eq!(auto_occ_cap(38_000_000, 1_000_000, 38_200_000, 40_000_000), (38.0f64 * 64.0).ceil() as u64);
+        // above the reference size the floor grows with the database
+        assert_eq!(auto_occ_cap(130_000_000, 10_000_000, 146_800_000, 40_000_000), 940);
+        assert_eq!(auto_occ_cap(130_000_000, 10_000_000, 146_800_000, 0), 832);
+        assert_eq!(auto_occ_cap(130_000_000, 1_000_000, 146_800_000, 40_000_000), 8320);
     }
     use crate::alphabet::EncodedProtein;
 

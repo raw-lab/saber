@@ -1,6 +1,6 @@
 {
  "name": "frag_diamond_very-sensitive",
- "m8": "/home/claude/bench/final13/multi/frag_diamond_very-sensitive.m8",
+ "m8": "/home/claude/bench/final14b/multi/frag_diamond_very-sensitive.m8",
  "subset": "all",
  "n_queries": 11206,
  "n_db": 11206,

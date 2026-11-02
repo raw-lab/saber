@@ -178,6 +178,29 @@ struct Table {
     entries: HugeBuf<u32>,
     /// Number of entries (without the padding).
     n: usize,
+    /// Blocked layout of a small batch: a presence sketch (a Bloom filter
+    /// with two bits per present code, both in the 64-bit word the code's
+    /// hash selects; see [`sketch_word_mask`]), small enough to stay in the
+    /// first- or second-level cache. A database position whose bits are not
+    /// both set is absent without reading the block records (megabytes for
+    /// weight-7 codes); the others are confirmed in the records. Empty = no
+    /// sketch.
+    sketch: Vec<u64>,
+    sk_shift: u32,
+}
+
+/// Presence sketches are built for blocked tables of at most this many seeds
+/// (at most 4 M bits = 512 KB).
+const SKETCH_MAX_SEEDS: usize = 1 << 18;
+/// Multiplier of the sketch hash (Fibonacci hashing).
+const SKETCH_MUL: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// Word index (the top `64 - sk_shift` bits of the hash) and two-bit mask
+/// (two further 6-bit fields of the hash) of a code in a presence sketch.
+#[inline(always)]
+fn sketch_word_mask(code: u32, sk_shift: u32) -> (usize, u64) {
+    let h = (code as u64).wrapping_mul(SKETCH_MUL);
+    ((h >> sk_shift) as usize, (1u64 << ((h >> 20) & 63)) | (1u64 << ((h >> 26) & 63)))
 }
 
 /// Tag bits of a blocked-layout entry (32 codes per block).
@@ -231,6 +254,8 @@ impl Table {
             recs: HugeBuf::default(),
             entries: HugeBuf::from_vec(entries),
             n: nseeds,
+            sketch: Vec::new(),
+            sk_shift: 0,
         }
     }
 
@@ -254,6 +279,8 @@ impl Table {
             recs: HugeBuf::default(),
             entries: HugeBuf::default(),
             n: nseeds,
+            sketch: Vec::new(),
+            sk_shift: 0,
         };
         for c in [0u64, 1, nb - 1, nb, nb + 1, 31 * nb - 1, 31 * nb, ncodes.saturating_sub(1), ncodes] {
             if c <= ncodes {
@@ -295,7 +322,73 @@ impl Table {
         let recs: Vec<u64> = (0..nbk + 2).map(|k| (occ[k] as u64) << 32 | start[k.min(nbk)] as u64).collect();
         t.recs = HugeBuf::from_vec(recs);
         t.entries = HugeBuf::from_vec(entries);
+        if nseeds > 0 && nseeds <= SKETCH_MAX_SEEDS {
+            // 64 bits per seed (about 0.2 % false positives), at most 4 M
+            // bits (from 65,536 seeds on fewer bits per seed, 16 at the
+            // largest batches: about 2 %): 64 .. 65,536 words
+            let words = (nseeds.next_power_of_two()).clamp(1 << 6, 1 << 16);
+            t.sk_shift = 64 - words.trailing_zeros();
+            t.sketch = vec![0u64; words];
+            for (v, _) in per_q {
+                for &(c, _) in v {
+                    let (k, m) = sketch_word_mask(c, t.sk_shift);
+                    t.sketch[k] |= m;
+                }
+            }
+        }
         t
+    }
+}
+
+/// Packed window-filter byte of a residue in the seed alphabet: seed letter
+/// `<< k` | rank of the residue within its letter's group (`k` bits), below
+/// 0x80. One AND gives the seed letter, the byte itself identifies the
+/// residue, so a hit's two identity counts take one compare each.
+#[derive(Clone, Copy, Debug)]
+struct WinEnc {
+    k: u32,
+    /// Alignment code 0..31 -> packed byte (0x80: not in the seed alphabet).
+    code: [u8; 32],
+    /// Seed letter 0..31 -> letter << k (0x80 for 31 and letters not in the
+    /// alphabet: NONSEED & 0x1F = 31).
+    letter: [u8; 32],
+}
+
+impl WinEnc {
+    /// The packing of a seed alphabet, if its letters and ranks fit below
+    /// 0x80 (every alphabet of up to 16 letters with groups of at most 8,
+    /// Murphy-10 and the full alphabet among them).
+    fn new(alpha: &crate::alphabet::SeedAlphabet) -> Option<WinEnc> {
+        let size = alpha.size as usize;
+        if size == 0 || size > 31 {
+            return None;
+        }
+        let mut count = [0usize; 32];
+        let mut rank = [0usize; 24];
+        for c in 0..24 {
+            let r = alpha.map[c];
+            if r != 255 {
+                rank[c] = count[r as usize];
+                count[r as usize] += 1;
+            }
+        }
+        let m = count.iter().copied().max().unwrap_or(1).max(1);
+        let k = usize::BITS - (m - 1).leading_zeros();
+        if (size << k) > 0x80 {
+            return None;
+        }
+        let mut code = [0x80u8; 32];
+        for c in 0..24 {
+            let r = alpha.map[c];
+            if r != 255 {
+                code[c] = ((r as usize) << k | rank[c]) as u8;
+            }
+        }
+        let mut letter = [0x80u8; 32];
+        for (r, x) in letter.iter_mut().enumerate().take(size) {
+            *x = (r << k) as u8;
+        }
+        Some(WinEnc { k, code, letter })
     }
 }
 
@@ -304,14 +397,17 @@ struct Batch {
     /// Offset of residue 0 of every query in the concatenated arrays.
     base: Vec<usize>,
     lens: Vec<usize>,
-    /// Window-filter bytes: the alignment code of every unmasked residue in
-    /// the seed alphabet, QSENT for masked/ambiguous residues and padding (the
-    /// seed-alphabet code is derived on the fly, so one window load per hit
-    /// serves both identity counts).
+    /// Window-filter bytes: every unmasked residue in the seed alphabet as
+    /// its packed byte (see [`WinEnc`]; without a packing, its alignment
+    /// code), QSENT for masked/ambiguous residues and padding — one window
+    /// load per hit serves both identity counts.
     win: HugeBuf<u8>,
-    /// Seed-alphabet map as byte-shuffle tables (codes 0..15 and 16..23).
-    rtab_lo: [u8; 16],
-    rtab_hi: [u8; 16],
+    /// The packing of `win` (None: alignment codes, portable filter only).
+    wenc: Option<WinEnc>,
+    /// `win` byte -> seed letter (255: none) and -> alignment code (QSENT:
+    /// none), for the portable filter.
+    qred: [u8; 256],
+    qfull: [u8; 256],
     /// Alignment code | (composition bias as u8) << 8 per position (X-drop).
     qcb: HugeBuf<u16>,
     /// Substitution scores as i16 (vectorized X-drop).
@@ -405,6 +501,11 @@ fn sort_by_position(v: &mut [Surv], tmp: &mut Vec<Surv>) {
 
 /// Survivors between the prefetch of their query codes and their X-drop.
 const XDROP_AHEAD: usize = 8;
+/// Window filter: query windows requested this many hits ahead.
+const FILTER_AHEAD: usize = 16;
+/// A mapped index's residue pages are released after every this many
+/// scanned residues (bytes).
+const RELEASE_RESIDUES: usize = 16 << 20;
 
 /// Granularity of [`Batch::qcoarse`] (positions).
 const QCOARSE_SHIFT: u32 = 8;
@@ -540,21 +641,56 @@ unsafe fn codes_avx2(sred: &[u8], base: usize, np: usize, offsets: &[u16], asize
     codes.clear();
     codes.reserve(np + 8);
     let out = codes.as_mut_ptr();
-    let av = _mm256_set1_epi32(asize as i32);
     let am1 = _mm256_set1_epi32(asize as i32 - 1);
     let invv = _mm256_set1_epi32(inv as i32);
     let ptr = sred.as_ptr().add(base);
+    let w = offsets.len();
     let mut p = 0usize;
-    while p < np {
-        let mut code = _mm256_setzero_si256();
-        let mut bad = _mm256_setzero_si256();
-        for &o in offsets {
-            let v = _mm256_cvtepu8_epi32(_mm_loadl_epi64(ptr.add(p + o as usize) as *const __m128i));
-            bad = _mm256_or_si256(bad, _mm256_cmpgt_epi32(v, am1));
-            code = _mm256_add_epi32(_mm256_mullo_epi32(code, av), v);
+    if w <= 32 {
+        // code = sum of digit_i * asize^(w-1-i): independent products summed
+        // in two chains instead of a chain of w dependent multiplications
+        // (the same value: codes stay below 2^26)
+        let mut pw = [_mm256_setzero_si256(); 32];
+        let mut x = 1i32;
+        for i in (0..w).rev() {
+            pw[i] = _mm256_set1_epi32(x);
+            x = x.wrapping_mul(asize as i32);
         }
-        _mm256_storeu_si256(out.add(p) as *mut __m256i, _mm256_blendv_epi8(code, invv, bad));
-        p += 8;
+        while p < np {
+            let (mut c0, mut c1) = (_mm256_setzero_si256(), _mm256_setzero_si256());
+            let mut bad = _mm256_setzero_si256();
+            let mut i = 0usize;
+            while i + 1 < w {
+                let v0 = _mm256_cvtepu8_epi32(_mm_loadl_epi64(ptr.add(p + offsets[i] as usize) as *const __m128i));
+                let v1 = _mm256_cvtepu8_epi32(_mm_loadl_epi64(ptr.add(p + offsets[i + 1] as usize) as *const __m128i));
+                bad = _mm256_or_si256(bad, _mm256_or_si256(_mm256_cmpgt_epi32(v0, am1), _mm256_cmpgt_epi32(v1, am1)));
+                c0 = _mm256_add_epi32(c0, _mm256_mullo_epi32(v0, pw[i]));
+                c1 = _mm256_add_epi32(c1, _mm256_mullo_epi32(v1, pw[i + 1]));
+                i += 2;
+            }
+            if i < w {
+                // the last digit has weight 1 when w is odd
+                let v = _mm256_cvtepu8_epi32(_mm_loadl_epi64(ptr.add(p + offsets[i] as usize) as *const __m128i));
+                bad = _mm256_or_si256(bad, _mm256_cmpgt_epi32(v, am1));
+                c0 = _mm256_add_epi32(c0, _mm256_mullo_epi32(v, pw[i]));
+            }
+            let code = _mm256_add_epi32(c0, c1);
+            _mm256_storeu_si256(out.add(p) as *mut __m256i, _mm256_blendv_epi8(code, invv, bad));
+            p += 8;
+        }
+    } else {
+        let av = _mm256_set1_epi32(asize as i32);
+        while p < np {
+            let mut code = _mm256_setzero_si256();
+            let mut bad = _mm256_setzero_si256();
+            for &o in offsets {
+                let v = _mm256_cvtepu8_epi32(_mm_loadl_epi64(ptr.add(p + o as usize) as *const __m128i));
+                bad = _mm256_or_si256(bad, _mm256_cmpgt_epi32(v, am1));
+                code = _mm256_add_epi32(_mm256_mullo_epi32(code, av), v);
+            }
+            _mm256_storeu_si256(out.add(p) as *mut __m256i, _mm256_blendv_epi8(code, invv, bad));
+            p += 8;
+        }
     }
     codes.set_len(np);
 }
@@ -588,7 +724,8 @@ fn present_positions(tab: &Table, codes: &[u32], cand: &mut Vec<(u32, u32)>) -> 
     let out = cand.as_mut_ptr();
     let mut n = 0usize;
     // SAFETY: n <= p < codes.len() <= capacity; codes are < inv or inv, and
-    // both lookup arrays cover the invalid code (always absent).
+    // both lookup arrays cover the invalid code (always absent); a sketch
+    // word index is below 2^(64 - sk_shift) = sketch.len().
     unsafe {
         if tab.dense {
             let bits = tab.bits.as_ptr();
@@ -596,6 +733,28 @@ fn present_positions(tab: &Table, codes: &[u32], cand: &mut Vec<(u32, u32)>) -> 
                 let w = *bits.add((c >> 6) as usize);
                 *out.add(n) = (p as u32, c);
                 n += ((w >> (c & 63)) & 1) as usize;
+            }
+        } else if tab.sk_shift > 0 {
+            // small batch: the sketch first (cache-resident; branch-free
+            // compaction of the positions it does not rule out), then the
+            // records for those only, compacted in place: their loads are
+            // independent of each other
+            let sk = tab.sketch.as_ptr();
+            let sh = tab.sk_shift;
+            for (p, &c) in codes.iter().enumerate() {
+                let (k, m) = sketch_word_mask(c, sh);
+                *out.add(n) = (p as u32, c);
+                n += (*sk.add(k) & m == m) as usize;
+            }
+            let recs = tab.recs.as_ptr();
+            let m = n;
+            n = 0;
+            for i in 0..m {
+                let (p, c) = *out.add(i);
+                let (k, tag) = tab.split(c);
+                let r = *recs.add(k);
+                *out.add(n) = (p, c);
+                n += ((r >> (32 + tag)) & 1) as usize;
             }
         } else {
             let recs = tab.recs.as_ptr();
@@ -804,7 +963,7 @@ unsafe fn xdrop_dir_avx2<const RIGHT: bool>(m16: &[i16; 768], q: *const u16, s: 
         };
         let idx = _mm256_or_si256(_mm256_slli_epi16::<5>(_mm256_and_si256(qv, lo8)), _mm256_and_si256(sv, m31));
         _mm256_store_si256(ibuf.0.as_mut_ptr() as *mut __m256i, idx);
-        // sixteen scalar table reads (a vector gather is slower here)
+        // sixteen scalar table reads (vector gathers measured slower)
         for k in 0..16 {
             buf.0[k] = std::ptr::read_volatile(mp.add(*ibuf.0.get_unchecked(k) as usize)) as u16;
         }
@@ -996,7 +1155,7 @@ impl<'a> Engine<'a> {
                     let cap = if self.params.seed_max_occ > 0 {
                         self.params.seed_max_occ as u64
                     } else {
-                        super::super::index::auto_occ_cap(total, ncodes)
+                        super::super::index::auto_occ_cap(total, ncodes, self.stats.db_length, self.params.ref_db_residues)
                     };
                     let mut bits = Vec::new();
                     // The list holds the codes above the index's listing
@@ -1062,7 +1221,7 @@ impl<'a> Engine<'a> {
             let cap = if self.params.seed_max_occ > 0 {
                 self.params.seed_max_occ as u64
             } else {
-                super::super::index::auto_occ_cap(total, ncodes)
+                super::super::index::auto_occ_cap(total, ncodes, self.stats.db_length, self.params.ref_db_residues)
             };
             let mut bits = Vec::new();
             if total > cap {
@@ -1180,6 +1339,8 @@ impl<'a> Engine<'a> {
             let piece_limit = (2 * budget).min(pair_limit);
             let nshapes = seeds.shapes.len();
             let mut splits = 0u64;
+            // residues before this offset have had their pages released
+            let mut released = 0usize;
             while c0 < nch {
                 let start = offs[db.chunks[c0].0];
                 let mut c1 = c0 + 1;
@@ -1264,6 +1425,14 @@ impl<'a> Engine<'a> {
                     self.stream_pair(db, &rs, &b, seeds, *job, cap, pair_limit, &mut st);
                     st.w.counters.t_extend_ns += t0.elapsed().as_nanos() as u64;
                 });
+                // the scanned residues are not read again until scoring (a
+                // mapped index: release their pages, in steps of
+                // RELEASE_RESIDUES to keep the system calls few)
+                let end = offs[db.chunks[c1 - 1].1] as usize;
+                if end - released >= RELEASE_RESIDUES {
+                    self.index.release_residue_pages(released, end);
+                    released = end;
+                }
                 // size the next round by this one's density
                 if round_n > budget {
                     round_res = (round_res / 2).max(CHUNK_RESIDUES);
@@ -1279,13 +1448,19 @@ impl<'a> Engine<'a> {
         release_free_memory();
         memtrace("scan done");
         let states: Vec<ScanState> = states.into_iter().map(|m| m.into_inner().expect("scan state")).collect();
-        // Merge per-query candidates (top `cap` under the global total order).
-        let mut per_query: Vec<Vec<Region>> = (0..nq).map(|_| Vec::new()).collect();
+        // Merge per-query candidates (top `cap` under the global total order),
+        // kept compact until each query is scored.
+        let mut per_query: Vec<Vec<RegionC>> = (0..nq).map(|_| Vec::new()).collect();
         for st in states {
             gctr.add(&st.w.counters);
             for (q, r) in st.regions.into_iter().enumerate() {
-                if !r.is_empty() {
-                    per_query[q].extend(r.into_iter().map(Region::from));
+                if r.is_empty() {
+                    continue;
+                }
+                if per_query[q].is_empty() {
+                    per_query[q] = r;
+                } else {
+                    per_query[q].extend_from_slice(&r);
                 }
             }
         }
@@ -1293,11 +1468,12 @@ impl<'a> Engine<'a> {
             .into_par_iter()
             .zip(queries.par_iter())
             .zip(preps.into_par_iter())
-            .map_init(Worker::new, |w, ((mut regions, q), (prep, pctr))| {
+            .map_init(Worker::new, |w, ((regions_c, q), (prep, pctr))| {
                 let before = w.counters;
                 if q.is_empty() {
                     return (Vec::new(), pctr);
                 }
+                let mut regions: Vec<Region> = regions_c.into_iter().map(Region::from).collect();
                 regions.sort_unstable_by(region_order);
                 if regions.len() > cap {
                     w.counters.regions_dropped_by_cap += (regions.len() - cap) as u64;
@@ -1336,6 +1512,7 @@ impl<'a> Engine<'a> {
         let mut win = HugeBuf::filled(total, QSENT);
         let mut qcb = HugeBuf::filled(total, crate::alphabet::AA_X as u16);
         let map = &seeds.alphabet.map;
+        let wenc = WinEnc::new(&seeds.alphabet);
         for (qi, q) in queries.iter().enumerate() {
             let o = base[qi];
             let prep = &preps[qi].0;
@@ -1346,7 +1523,10 @@ impl<'a> Engine<'a> {
                     let r = map[(c as usize).min(23)];
                     if r != 255 {
                         red[o + i] = r;
-                        win[o + i] = c;
+                        win[o + i] = match &wenc {
+                            Some(e) => e.code[(c as usize).min(23)],
+                            None => c,
+                        };
                     }
                 }
             }
@@ -1395,20 +1575,24 @@ impl<'a> Engine<'a> {
             };
             tables.push(table);
         }
-        let mut rtab_lo = [0xFFu8; 16];
-        let mut rtab_hi = [0xFFu8; 16];
+        // decoding of the window bytes for the portable filter
+        let mut qred = [255u8; 256];
+        let mut qfull = [QSENT; 256];
         for cc in 0..24usize {
             let r = map[cc];
-            if cc < 16 {
-                rtab_lo[cc] = r;
-            } else {
-                rtab_hi[cc - 16] = r;
+            if r != 255 {
+                let w = match &wenc {
+                    Some(e) => e.code[cc],
+                    None => cc as u8,
+                } as usize;
+                qred[w] = r;
+                qfull[w] = cc as u8;
             }
         }
         let qcoarse: Vec<u32> = (0..(total >> QCOARSE_SHIFT) + 1)
             .map(|k| (base.partition_point(|&x| x <= k << QCOARSE_SHIFT).max(1) - 1) as u32)
             .collect();
-        Batch { base, lens, win, rtab_lo, rtab_hi, qcb, m16: mflat16(&self.mflat), qcoarse, region_thr, tables }
+        Batch { base, lens, win, wenc, qred, qfull, qcb, m16: mflat16(&self.mflat), qcoarse, region_thr, tables }
     }
 
     /// Seed lookups and window filter of subjects `[lo, hi)` for the given
@@ -1588,7 +1772,7 @@ impl<'a> Engine<'a> {
                         }
                     } else {
                         #[cfg(target_arch = "x86_64")]
-                        if AVX {
+                        if AVX && b.wenc.is_some() {
                             // SAFETY: AVX = true only from the AVX2 wrapper; window
                             // loads stay inside the padded buffers.
                             unsafe { self.filter_avx2(db, rs, b, &st.hl, &st.pend, sb, sl, c, kx, min_ids, t_base, surv, &mut filtered) };
@@ -1627,7 +1811,7 @@ impl<'a> Engine<'a> {
         db: &ScanDb,
         rs: &RoundSeeds,
         b: &Batch,
-        seeds: &ScanSeeds,
+        _seeds: &ScanSeeds,
         hl: &[u32],
         pend: &[(u32, u32, u32, u32)],
         sb: usize,
@@ -1653,11 +1837,11 @@ impl<'a> Engine<'a> {
                     if (lane >> t) & 1 == 0 {
                         continue;
                     }
-                    let qc = b.win[qo + t];
-                    let qr = if qc < 24 { seeds.alphabet.map[qc as usize] } else { QSENT };
+                    let w = b.win[qo + t] as usize;
+                    let qr = b.qred[w];
                     if qr != 255 && qr == rs.buf[g0 - rs.base + t] & 0x7F {
                         r += 1;
-                        if kx > 0 && qc == db.raw[g0 + t] {
+                        if kx > 0 && b.qfull[w] == db.raw[g0 + t] {
                             e += 1;
                         }
                     }
@@ -2040,10 +2224,17 @@ impl<'a> Engine<'a> {
         *surv = Vec::new();
     }
 
-    /// Window filter (AVX2): one 32-byte load per hit, the query's alignment
-    /// codes, reduced to the seed alphabet with two byte shuffles; the windows
-    /// of the hits 16 ahead are requested into L1. Not inlined: a small
-    /// function keeps its constants in registers.
+    /// Window filter (AVX2): one 32-byte load per hit — the query's packed
+    /// window bytes ([`WinEnc`]): one AND and one compare count the
+    /// seed-letter identities, one compare the exact ones; the subject
+    /// window is packed once per position. The windows of the hits 16 ahead
+    /// are requested into L1; survivors are written without branches (room
+    /// for every hit of a position reserved). Not inlined: a small function
+    /// keeps its constants in registers.
+    ///
+    /// # Safety
+    /// AVX2 and POPCNT available; `b.wenc` is set; the window loads stay
+    /// inside the padded buffers.
     #[cfg(target_arch = "x86_64")]
     #[inline(never)]
     #[target_feature(enable = "avx2,popcnt")]
@@ -2065,14 +2256,21 @@ impl<'a> Engine<'a> {
         filtered: &mut u64,
     ) {
         use std::arch::x86_64::*;
-        let tlo = _mm256_broadcastsi128_si256(_mm_loadu_si128(b.rtab_lo.as_ptr() as *const __m128i));
-        let thi = _mm256_broadcastsi128_si256(_mm_loadu_si128(b.rtab_hi.as_ptr() as *const __m128i));
+        let Some(enc) = b.wenc.as_ref() else {
+            return;
+        };
+        let ld16 = |p: *const u8| _mm256_broadcastsi128_si256(_mm_loadu_si128(p as *const __m128i));
+        let (let_lo, let_hi) = (ld16(enc.letter.as_ptr()), ld16(enc.letter.as_ptr().add(16)));
+        let (code_lo, code_hi) = (ld16(enc.code.as_ptr()), ld16(enc.code.as_ptr().add(16)));
+        let rm = _mm256_set1_epi8((0xFFu32 << enc.k) as u8 as i8);
         let nib = _mm256_set1_epi8(0x0f);
         let fifteen = _mm256_set1_epi8(15);
         let m7f = _mm256_set1_epi8(0x7F);
         let wp = b.win.as_ptr();
         let hp = hl.as_ptr();
         let nh = hl.len();
+        let mut seen = 0usize;
+        let mut kept = 0usize;
         for &(p, h0, h1, _) in pend {
             if h0 == h1 {
                 continue;
@@ -2082,34 +2280,46 @@ impl<'a> Engine<'a> {
             let hi_l = (sl as i64 - ss).min(32) as u32;
             let lane = (if hi_l >= 32 { u32::MAX } else { (1u32 << hi_l) - 1 }) & !((1u32 << lo_l) - 1);
             let g0 = (PAD as i64 + sb as i64 + ss) as usize;
-            let sv = _mm256_and_si256(_mm256_loadu_si256(rs.buf.as_ptr().add(g0 - rs.base) as *const __m256i), m7f);
-            let svr = if kx > 0 { _mm256_loadu_si256(db.raw.as_ptr().add(g0) as *const __m256i) } else { _mm256_setzero_si256() };
+            // subject window: seed letter << k (0x80 for NONSEED), packed residues
+            let x = _mm256_and_si256(_mm256_loadu_si256(rs.buf.as_ptr().add(g0 - rs.base) as *const __m256i), m7f);
+            let xi = _mm256_and_si256(x, nib);
+            let sv = _mm256_blendv_epi8(_mm256_shuffle_epi8(let_lo, xi), _mm256_shuffle_epi8(let_hi, xi), _mm256_cmpgt_epi8(x, fifteen));
+            let sx = if kx > 0 {
+                // lanes outside the subject (padding) are cleared by `lane`
+                let y = _mm256_loadu_si256(db.raw.as_ptr().add(g0) as *const __m256i);
+                let yi = _mm256_and_si256(y, nib);
+                _mm256_blendv_epi8(_mm256_shuffle_epi8(code_lo, yi), _mm256_shuffle_epi8(code_hi, yi), _mm256_cmpgt_epi8(y, fifteen))
+            } else {
+                _mm256_setzero_si256()
+            };
+            // room for every hit of this position (grows like pushes would)
+            surv.reserve((h1 - h0) as usize);
+            let out = surv.as_mut_ptr().add(surv.len());
+            let mut n = 0usize;
             for k in h0 as usize..h1 as usize {
-                if k + 16 < nh {
+                if k + FILTER_AHEAD < nh {
                     // both lines a window may span
-                    let wq = wp.add(*hp.add(k + 16) as usize + c - 16);
+                    let wq = wp.add(*hp.add(k + FILTER_AHEAD) as usize + c - 16);
                     _mm_prefetch(wq as *const i8, _MM_HINT_T0);
                     _mm_prefetch(wq.add(31) as *const i8, _MM_HINT_T0);
                 }
                 let g = *hp.add(k);
                 let w = _mm256_loadu_si256(wp.add(g as usize + c - 16) as *const __m256i);
-                // codes 0..23 -> seed-alphabet code; sentinels (bit 7 set) -> 0xFF
-                let idx = _mm256_and_si256(w, nib);
-                let red = _mm256_blendv_epi8(_mm256_shuffle_epi8(tlo, idx), _mm256_shuffle_epi8(thi, idx), _mm256_cmpgt_epi8(w, fifteen));
-                let red = _mm256_or_si256(red, _mm256_cmpgt_epi8(_mm256_setzero_si256(), w));
-                let eq = _mm256_movemask_epi8(_mm256_cmpeq_epi8(red, sv)) as u32 & lane;
+                let eq = _mm256_movemask_epi8(_mm256_cmpeq_epi8(_mm256_and_si256(w, rm), sv)) as u32 & lane;
                 let mut v = eq.count_ones();
                 if kx > 0 {
-                    let ex = _mm256_movemask_epi8(_mm256_cmpeq_epi8(w, svr)) as u32 & eq;
+                    let ex = _mm256_movemask_epi8(_mm256_cmpeq_epi8(w, sx)) as u32 & eq;
                     v += kx * ex.count_ones();
                 }
-                if v >= min_ids {
-                    surv.push(Surv { g, t: t_base + p });
-                } else {
-                    *filtered += 1;
-                }
+                // SAFETY: n < h1 - h0, the room reserved.
+                out.add(n).write(Surv { g, t: t_base + p });
+                n += (v >= min_ids) as usize;
             }
+            surv.set_len(surv.len() + n);
+            seen += (h1 - h0) as usize;
+            kept += n;
         }
+        *filtered += (seen - kept) as u64;
     }
 
     /// One (query, subject) pair scanned and visited on its own: the query's
@@ -2294,6 +2504,93 @@ mod tests {
                 (v, 0)
             })
             .collect()
+    }
+
+    #[test]
+    fn packed_window_bytes_give_the_seed_letter_and_the_residue() {
+        use crate::alphabet::SeedAlphabet;
+        for (spec, k) in [("murphy10", 2u32), ("full", 0), ("custom:ACDEFGHIKLMNPQRSTVWY", 5), ("custom:AC DEFGHIKL MNPQRSTV WY", 3)] {
+            let a = SeedAlphabet::parse(spec).unwrap();
+            let e = WinEnc::new(&a).unwrap_or_else(|| panic!("{spec}: packable"));
+            assert_eq!(e.k, k, "{spec}");
+            let rm = (0xFFu32 << e.k) as u8;
+            let mut seen = std::collections::HashSet::new();
+            for c in 0..24usize {
+                let r = a.map[c];
+                if r == 255 {
+                    assert_eq!(e.code[c], 0x80);
+                    continue;
+                }
+                assert!(e.code[c] < 0x80 && seen.insert(e.code[c]), "{spec}: residue {c} packed uniquely below 0x80");
+                assert_eq!(e.code[c] & rm, e.letter[r as usize], "{spec}: one AND gives the seed letter");
+                // never equal to a subject's NONSEED letter or a query sentinel
+                assert_ne!(e.code[c] & rm, e.letter[(NONSEED & 0x1F) as usize]);
+                assert_ne!(QSENT & rm, e.letter[r as usize]);
+            }
+            assert_eq!(e.letter[(NONSEED & 0x1F) as usize], 0x80);
+        }
+        // a group of nine among twelve letters: 12 << 4 bytes do not fit
+        assert!(WinEnc::new(&SeedAlphabet::parse("custom:ACDEFGHIK L M N P Q R S T V W Y").unwrap()).is_none());
+    }
+
+    #[test]
+    fn vector_seed_codes_match_scalar() {
+        #[cfg(target_arch = "x86_64")]
+        if is_x86_feature_detected!("avx2") {
+            let mut r = Lcg(3);
+            for (asize, shapes) in [
+                (10u8, vec![vec![0u16, 1, 2, 3, 5, 6, 7], vec![0, 1, 4, 7, 8, 10], vec![0, 2, 5]]),
+                (20, vec![vec![0u16, 1, 2, 3], vec![0, 2, 3, 6, 7]]),
+                (4, (0..12u16).map(|k| (0..=k).collect()).collect()),
+            ] {
+                for offs in &shapes {
+                    let span = *offs.last().expect("non-empty") as usize + 1;
+                    for len in [span, span + 1, span + 7, span + 8, 300] {
+                        // seed bytes, some invalid (>= asize), padded for vector reads
+                        let mut sb: Vec<u8> = (0..len).map(|_| if r.next(13) == 0 { 0xFF } else { r.next(asize as u64) as u8 }).collect();
+                        sb.resize(len + span + 16, 0xFF);
+                        let np = len - span + 1;
+                        let inv = (asize as u32).pow(offs.len() as u32);
+                        let (mut a, mut b) = (Vec::new(), Vec::new());
+                        codes_scalar(&sb, np, offs, asize, asize as u32, inv, &mut a);
+                        // SAFETY: AVX2 checked; sb padded by span + 16 bytes.
+                        unsafe { seed_codes_avx2(&sb, np, offs, asize, inv, &mut b) };
+                        assert_eq!(a, b, "asize {asize} shape {offs:?} len {len}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn presence_sketch_gives_exactly_the_record_lookups() {
+        let mut r = Lcg(11);
+        for ncodes in [100_003u64, 10_000_000] {
+            // about 30 seeds per query: about 60, 6,000 and 275,000 seeds
+            // (the last above SKETCH_MAX_SEEDS: no sketch)
+            for nq in [2usize, 200, 9000] {
+                let per_q = random_seeds(&mut r, ncodes, nq);
+                let n: usize = per_q.iter().map(|x| x.0.len()).sum();
+                let tab = Table::blocked(ncodes, &per_q, n);
+                assert_eq!(tab.sk_shift > 0, n <= SKETCH_MAX_SEEDS, "sketch only for small batches");
+                // probes: every seed's code, random codes, the invalid code
+                let mut probe: Vec<u32> = per_q.iter().flat_map(|(v, _)| v.iter().map(|&(c, _)| c)).take(3000).collect();
+                probe.extend((0..20_000).map(|_| r.next(ncodes) as u32));
+                probe.push(tab.inv);
+                let mut cand = Vec::new();
+                present_positions(&tab, &probe, &mut cand);
+                let want: Vec<(u32, u32)> = probe
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &c)| {
+                        let (k, tag) = tab.split(c);
+                        (tab.recs[k] >> (32 + tag)) & 1 == 1
+                    })
+                    .map(|(p, &c)| (p as u32, c))
+                    .collect();
+                assert_eq!(cand, want, "ncodes {ncodes} seeds {n}");
+            }
+        }
     }
 
     #[test]

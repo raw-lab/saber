@@ -1,40 +1,47 @@
 #!/usr/bin/env bash
-# Reproducible SABER benchmark suite: SABER 1.3.0 vs 1.2.0 vs DIAMOND.
+# Reproducible SABER benchmark suite: SABER 1.4.0 vs 1.3.0 vs DIAMOND.
 #
 #   bench/scripts/run_all.sh [section ...]
 #   sections (default order): env scale scop decoy mmseqs index translated
-#   lowc multi threads sweep scale_extra scale_algo oneoff (the last four
-#   need the scale section's indexes or database)
+#   lowc multi threads sweep scale_extra scale_algo oneoff scaling lenmatch
+#   qscale (scale_extra, scale_algo, oneoff, sweep, qscale need the scale
+#   section's indexes or database)
 #
-# The 1.2.0 suite (with SABER 1.0.2 / 1.1.0) and its results are kept in
-# bench/results/v1.2.0/; this suite compares the 1.3.0 presets with DIAMOND's
-# modes, and keeps a few SABER 1.2.0 rows as before/after references.
+# The 1.2.0 suite (with SABER 1.0.2 / 1.1.0) and the 1.3.0 suite (with SABER
+# 1.2.0) and their results are kept in bench/results/v1.2.0/ and
+# bench/results/v1.3.0/; this suite compares the 1.4.0 presets with DIAMOND's
+# modes, keeps SABER 1.3.0 rows as before/after references, and adds the
+# scaling sections (database size, length-matched decoys, query count).
 #
 # Configuration (environment variables, defaults are the paths used for the
 # published results):
-#   V13               SABER 1.3.0 binary (this release)
-#   V12               SABER 1.2.0 binary (previous release)
+#   VN                SABER 1.4.0 binary (this release)
+#   VO                SABER 1.3.0 binary (previous release)
 #   DMD               DIAMOND binary (2.2.8)
 #   DATA              directory with scop40.fa, scop40.labels.tsv, mmseqs_*.fasta
 #   DER               derived datasets (bench/scripts/make_datasets.py DATA DER;
-#                     the scale section adds DER/scop40.scale.fa)
+#                     the scale section adds DER/scop40.scale.fa, the scaling
+#                     sections DER/scaling/)
 #   OUT               results directory
 #   THREADS           threads for multicore runs (default 2)
 #   REPS              repetitions for timed runs (default 3)
 #   KEYREPS           repetitions of the interleaved headline pairs of the
 #                     scale and oneoff sections (default 5)
+#   SCALING_K         decoy multiples of the scaling section (default
+#                     "1 2 4 8 16": 20,000 x K reversed proteins)
 #
 # Every timed run goes through runbench.py, which records wall/CPU time and the
 # child's peak RSS (getrusage) to OUT/<section>/times.jsonl. Search outputs
 # are kept for evaluation (m8 = BLAST tabular, same columns for every tool).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-V13=${V13:-/home/claude/bench/binaries/saber-1.3.0}
-V12=${V12:-/home/claude/bench/binaries/saber-1.2.0-final}
+VN=${VN:-/home/claude/bench/binaries/saber-1.4.0}
+VO=${VO:-/home/claude/bench/binaries/saber-1.3.0}
 DMD=${DMD:-/home/claude/tools/d228/diamond}
 DATA=${DATA:-/home/claude/bench/data}
 DER=${DER:-/home/claude/bench/derived}
-OUT=${OUT:-/home/claude/bench/final13}
+OUT=${OUT:-/home/claude/bench/final14}
+SCALING_K=${SCALING_K:-"1 2 4 8 16"}
 THREADS=${THREADS:-2}
 REPS=${REPS:-3}
 KEYREPS=${KEYREPS:-5}
@@ -93,9 +100,9 @@ sec_env() {
     echo "rustc (SABER builds): $(/usr/bin/rustc --version)"
     echo "flags: cargo build --release (opt-level=3, lto=thin, codegen-units=1), no target-cpu flags"
     echo "diamond: $($DMD version 2>&1 | head -1) sha256 $(sha256sum $DMD | cut -d' ' -f1)"
-    for b in $V12 $V13; do echo "$b: $($b --version 2>&1 | tail -1) sha256 $(sha256sum $b | cut -d' ' -f1)"; done
+    for b in $VO $VN; do echo "$b: $($b --version 2>&1 | tail -1) sha256 $(sha256sum $b | cut -d' ' -f1)"; done
     echo "datasets:"; sha256sum $DATA/* | sed 's/^/  /'
-    echo "derived:"; sha256sum $DER/* | sed 's/^/  /'
+    echo "derived:"; find $DER -type f | sort | xargs sha256sum | sed "s|$DER/||; s/^/  /"
   } > $SEC/environment.txt
   cat $SEC/environment.txt
 }
@@ -109,18 +116,18 @@ sec_scale() {
   [ -s $DB ] || $PY $HERE/make_scale_db.py $DATA/scop40.fa $DER/mm.db400.fa $DB
   sha256sum $DB > $SEC/dataset.sha256
   log "scale: index construction"
-  timed makedb_saber_v1.3 $REPS - -- $V13 --makedb $SEC/scale.sdx -d $DB --quiet
+  timed makedb_saber_v1.4 $REPS - -- $VN --makedb $SEC/scale.sdx -d $DB --quiet
   timed makedb_diamond $REPS - -- $DMD makedb --in $DB -d $SEC/scale --threads $THREADS --quiet
-  timed makedb_saber_v1.2 1 - -- $V12 --makedb $SEC/scale.v12.sdx -d $DB --quiet
-  ls -l $SEC/scale.sdx $SEC/scale.dmnd $SEC/scale.v12.sdx > $SEC/sizes.txt
-  log "scale: SABER 1.3 default vs DIAMOND --very-sensitive, interleaved"
+  timed makedb_saber_v1.3 1 - -- $VO --makedb $SEC/scale.vo.sdx -d $DB --quiet
+  ls -l $SEC/scale.sdx $SEC/scale.dmnd $SEC/scale.vo.sdx > $SEC/sizes.txt
+  log "scale: SABER 1.4 default vs DIAMOND --very-sensitive, interleaved"
   for r in $(seq $KEYREPS); do
-    timed saber_v1.3_default 1 $SEC/saber_v1.3_default.m8 -- $V13 -q $Q --db $SEC/scale.sdx -k 100000 -E 10 -t $THREADS --quiet --stats $SEC/saber_v1.3_default.stats.json
+    timed saber_v1.4_default 1 $SEC/saber_v1.4_default.m8 -- $VN -q $Q --db $SEC/scale.sdx -k 100000 -E 10 -t $THREADS --quiet --stats $SEC/saber_v1.4_default.stats.json
     timed diamond_very-sensitive 1 $SEC/diamond_very-sensitive.m8 -- $DMD blastp -q $Q -d $SEC/scale.dmnd --threads $THREADS -k 0 -e 10 --very-sensitive --quiet -o /dev/stdout
   done
   for p in very-fast fast sensitive more-sensitive; do
-    log "scale: v1.3 $p"
-    timed saber_v1.3_$p $REPS $SEC/saber_v1.3_$p.m8 -- $V13 -q $Q --db $SEC/scale.sdx -k 100000 -E 10 -t $THREADS --preset $p --quiet --stats $SEC/saber_v1.3_$p.stats.json
+    log "scale: v1.4 $p"
+    timed saber_v1.4_$p $REPS $SEC/saber_v1.4_$p.m8 -- $VN -q $Q --db $SEC/scale.sdx -k 100000 -E 10 -t $THREADS --preset $p --quiet --stats $SEC/saber_v1.4_$p.stats.json
   done
   for m in fast default mid-sensitive sensitive more-sensitive; do
     log "scale: diamond $m"
@@ -128,37 +135,36 @@ sec_scale() {
   done
   log "scale: diamond ultra-sensitive (1 rep)"
   timed diamond_ultra-sensitive 1 $SEC/diamond_ultra-sensitive.m8 -- $DMD blastp -q $Q -d $SEC/scale.dmnd --threads $THREADS -k 0 -e 10 --ultra-sensitive --quiet -o /dev/stdout
-  log "scale: v1.2.0 default (1 rep)"
-  timed saber_v1.2_default 1 $SEC/saber_v1.2_default.m8 -- $V12 -q $Q --db $SEC/scale.v12.sdx -k 100000 -E 10 -t $THREADS --quiet
-  rm -f $SEC/scale.v12.sdx
+  log "scale: v1.3.0 default (1 rep)"
+  timed saber_v1.3_default 1 $SEC/saber_v1.3_default.m8 -- $VO -q $Q --db $SEC/scale.vo.sdx -k 100000 -E 10 -t $THREADS --quiet
+  rm -f $SEC/scale.vo.sdx
   # practical settings: E <= 1e-3, 25 targets per query
-  timed practical_saber_v1.3_default $REPS - -- $V13 -q $Q --db $SEC/scale.sdx -k 25 -E 1e-3 -t $THREADS --quiet
+  timed practical_saber_v1.4_default $REPS - -- $VN -q $Q --db $SEC/scale.sdx -k 25 -E 1e-3 -t $THREADS --quiet
   timed practical_diamond_very-sensitive $REPS - -- $DMD blastp -q $Q -d $SEC/scale.dmnd --threads $THREADS -k 25 -e 1e-3 --very-sensitive --quiet -o /dev/null
   scale_eval
 }
 
 # Checks on the scale section's comparison: DIAMOND --very-sensitive with one
-# seed-index chunk (-c1, DIAMOND's speed/memory knob) and SABER 1.3 default
+# seed-index chunk (-c1, DIAMOND's speed/memory knob) and SABER 1.4 default
 # with the 1.2 E-value model (what the per-subject E-values contribute).
 sec_scale_extra() {
   begin scale
   local Q=$DATA/scop40.fa
   [ -s $SEC/scale.sdx ] && [ -s $SEC/scale.dmnd ] || { log "scale_extra: run the scale section first"; return 1; }
   timed diamond_very-sensitive_c1 $REPS $SEC/diamond_very-sensitive_c1.m8 -- $DMD blastp -q $Q -d $SEC/scale.dmnd --threads $THREADS -k 0 -e 10 --very-sensitive -c1 --quiet -o /dev/stdout
-  timed saber_v1.3_default_dbmodel 1 $SEC/saber_v1.3_default_dbmodel.m8 -- $V13 -q $Q --db $SEC/scale.sdx -k 100000 -E 10 -t $THREADS --evalue-model database --quiet
+  timed saber_v1.4_default_dbmodel 1 $SEC/saber_v1.4_default_dbmodel.m8 -- $VN -q $Q --db $SEC/scale.sdx -k 100000 -E 10 -t $THREADS --evalue-model database --quiet
   scale_eval
 }
 
 # DIAMOND chooses its seed-search algorithm automatically (double-indexed or
-# query-indexed, --algo 0/1). Check that the forced alternative is not faster
-# than DIAMOND's choice: --algo 1 alternating with SABER 1.3 default, outputs
-# evaluated like the scale section's.
+# query-indexed, --algo 0/1). The forced alternative, --algo 1, alternating
+# with SABER 1.4 default, outputs evaluated like the scale section's.
 sec_scale_algo() {
   begin scale_algo
   local Q=$DATA/scop40.fa IDX=$OUT/scale
   [ -s $IDX/scale.sdx ] && [ -s $IDX/scale.dmnd ] || { log "scale_algo: run the scale section first"; return 1; }
   for r in $(seq $REPS); do
-    timed saber_v1.3_default 1 - -- $V13 -q $Q --db $IDX/scale.sdx -k 100000 -E 10 -t $THREADS --quiet
+    timed saber_v1.4_default 1 - -- $VN -q $Q --db $IDX/scale.sdx -k 100000 -E 10 -t $THREADS --quiet
     timed diamond_very-sensitive_algo1 1 $SEC/diamond_very-sensitive_algo1.m8 -- $DMD blastp -q $Q -d $IDX/scale.dmnd --threads $THREADS -k 0 -e 10 --very-sensitive --algo 1 --quiet -o /dev/stdout
   done
   for sub in tune test all; do
@@ -173,12 +179,12 @@ sec_oneoff() {
   begin oneoff
   local Q=$DATA/scop40.fa DB=$DER/scop40.scale.fa
   [ -s $DB ] || { log "oneoff: run the scale section first"; return 1; }
-  log "oneoff: SABER 1.3 default on the FASTA vs DIAMOND makedb + blastp --very-sensitive, interleaved"
+  log "oneoff: SABER 1.4 default on the FASTA vs DIAMOND makedb + blastp --very-sensitive, interleaved"
   for r in $(seq $KEYREPS); do
-    timed saber_v1.3_default_fasta 1 $SEC/saber_v1.3_default_fasta.m8 -- $V13 -q $Q -d $DB -k 100000 -E 10 -t $THREADS --quiet --stats $SEC/saber_v1.3_default_fasta.stats.json
+    timed saber_v1.4_default_fasta 1 $SEC/saber_v1.4_default_fasta.m8 -- $VN -q $Q -d $DB -k 100000 -E 10 -t $THREADS --quiet --stats $SEC/saber_v1.4_default_fasta.stats.json
     timed diamond_very-sensitive_makedb_blastp 1 - -- bash -c "$DMD makedb --in $DB -d $SEC/oneoff --threads $THREADS --quiet && $DMD blastp -q $Q -d $SEC/oneoff.dmnd --threads $THREADS -k 0 -e 10 --very-sensitive --quiet -o /dev/null"
   done
-  if cmp -s $SEC/saber_v1.3_default_fasta.m8 $OUT/scale/saber_v1.3_default.m8; then echo "in-memory index output == prebuilt index output" > $SEC/outputs_check.txt; else echo "in-memory and prebuilt index outputs DIFFER" > $SEC/outputs_check.txt; fi
+  if cmp -s $SEC/saber_v1.4_default_fasta.m8 $OUT/scale/saber_v1.4_default.m8; then echo "in-memory index output == prebuilt index output" > $SEC/outputs_check.txt; else echo "in-memory and prebuilt index outputs DIFFER" > $SEC/outputs_check.txt; fi
   rm -f $SEC/oneoff.dmnd
 }
 
@@ -198,30 +204,30 @@ sec_scop() {
   local Q=$DATA/scop40.fa
   log "scop: index construction"
   timed diamond_makedb $REPS - -- $DMD makedb --in $Q -d $SEC/scop40 --threads $THREADS
-  timed saber_v1.3_makedb_default $REPS - -- $V13 --makedb $SEC/scop40_default.sdx -d $Q --quiet
+  timed saber_v1.4_makedb_default $REPS - -- $VN --makedb $SEC/scop40_default.sdx -d $Q --quiet
   for p in very-fast fast default sensitive more-sensitive legacy; do
-    log "scop: v1.3 $p"
-    timed saber_v1.3_$p $REPS $SEC/saber_v1.3_$p.m8 -- $V13 -q $Q -d $Q -k 100000 -E 10 -t $THREADS --preset $p --quiet --stats $SEC/saber_v1.3_$p.stats.json
+    log "scop: v1.4 $p"
+    timed saber_v1.4_$p $REPS $SEC/saber_v1.4_$p.m8 -- $VN -q $Q -d $Q -k 100000 -E 10 -t $THREADS --preset $p --quiet --stats $SEC/saber_v1.4_$p.stats.json
   done
-  log "scop: v1.3 default with a persistent index (--db, warm)"
-  timed saber_v1.3_default_db_warm $REPS $SEC/saber_v1.3_default_db.m8 -- $V13 -q $Q --db $SEC/scop40_default.sdx -k 100000 -E 10 -t $THREADS --quiet
+  log "scop: v1.4 default with a persistent index (--db, warm)"
+  timed saber_v1.4_default_db_warm $REPS $SEC/saber_v1.4_default_db.m8 -- $VN -q $Q --db $SEC/scop40_default.sdx -k 100000 -E 10 -t $THREADS --quiet
   for m in fast default mid-sensitive sensitive more-sensitive very-sensitive ultra-sensitive; do
     log "scop: diamond $m"
     timed diamond_$m $REPS $SEC/diamond_$m.m8 -- $DMD blastp -q $Q -d $SEC/scop40.dmnd --threads $THREADS -k 0 -e 10 $(dflag $m) --quiet -o /dev/stdout
   done
-  log "scop: v1.2.0"
+  log "scop: v1.3.0"
   for p in default more-sensitive; do
-    timed saber_v1.2_$p $REPS $SEC/saber_v1.2_$p.m8 -- $V12 -q $Q -d $Q -k 100000 -E 10 -t $THREADS --preset $p --quiet
+    timed saber_v1.3_$p $REPS $SEC/saber_v1.3_$p.m8 -- $VO -q $Q -d $Q -k 100000 -E 10 -t $THREADS --preset $p --quiet
   done
   # practical settings (E <= 1e-3, 25 targets) for the main configurations
   for p in fast default; do
-    timed practical_saber_v1.3_$p $REPS - -- $V13 -q $Q -d $Q -k 25 -E 1e-3 -t $THREADS --preset $p --quiet
+    timed practical_saber_v1.4_$p $REPS - -- $VN -q $Q -d $Q -k 25 -E 1e-3 -t $THREADS --preset $p --quiet
   done
   for m in default very-sensitive ultra-sensitive; do
     timed practical_diamond_$m $REPS - -- $DMD blastp -q $Q -d $SEC/scop40.dmnd --threads $THREADS -k 25 -e 1e-3 $(dflag $m) --quiet -o /dev/null
   done
-  log "scop: v1.3 exhaustive (1 rep)"
-  timed saber_v1.3_exhaustive 1 $SEC/saber_v1.3_exhaustive.m8 -- $V13 -q $Q -d $Q -k 100000 -E 10 -t $THREADS --preset exhaustive --quiet --stats $SEC/saber_v1.3_exhaustive.stats.json
+  log "scop: v1.4 exhaustive (1 rep)"
+  timed saber_v1.4_exhaustive 1 $SEC/saber_v1.4_exhaustive.m8 -- $VN -q $Q -d $Q -k 100000 -E 10 -t $THREADS --preset exhaustive --quiet --stats $SEC/saber_v1.4_exhaustive.stats.json
   scop_eval
 }
 
@@ -243,10 +249,10 @@ sec_decoy() {
     local DB=$DER/scop40.$d.fa
     $DMD makedb --in $DB -d $SEC/$d --quiet
     for p in fast default more-sensitive; do
-      timed saber_v1.3_${p}_$d 1 $SEC/saber_v1.3_${p}_$d.m8 -- $V13 -q $Q -d $DB -k 100000 -E 10 -t $THREADS --preset $p --quiet
+      timed saber_v1.4_${p}_$d 1 $SEC/saber_v1.4_${p}_$d.m8 -- $VN -q $Q -d $DB -k 100000 -E 10 -t $THREADS --preset $p --quiet
     done
-    timed saber_v1.3_default_dbmodel_$d 1 $SEC/saber_v1.3_default_dbmodel_$d.m8 -- $V13 -q $Q -d $DB -k 100000 -E 10 -t $THREADS --evalue-model database --quiet
-    timed saber_v1.2_default_$d 1 $SEC/saber_v1.2_default_$d.m8 -- $V12 -q $Q -d $DB -k 100000 -E 10 -t $THREADS --quiet
+    timed saber_v1.4_default_dbmodel_$d 1 $SEC/saber_v1.4_default_dbmodel_$d.m8 -- $VN -q $Q -d $DB -k 100000 -E 10 -t $THREADS --evalue-model database --quiet
+    timed saber_v1.3_default_$d 1 $SEC/saber_v1.3_default_$d.m8 -- $VO -q $Q -d $DB -k 100000 -E 10 -t $THREADS --quiet
     for m in default very-sensitive ultra-sensitive; do
       timed diamond_${m}_$d 1 $SEC/diamond_${m}_$d.m8 -- $DMD blastp -q $Q -d $SEC/$d.dmnd --threads $THREADS -k 0 -e 10 $(dflag $m) --quiet -o /dev/stdout
     done
@@ -259,33 +265,33 @@ sec_mmseqs() {
   local Q=$DATA/mmseqs_QUERY.fasta DB=$DATA/mmseqs_DB.fasta
   $DMD makedb --in $DB -d $SEC/db --quiet
   log "mmseqs: exhaustive reference"
-  timed saber_v1.3_exhaustive 1 $SEC/saber_v1.3_exhaustive.m8 -- $V13 -q $Q -d $DB -k 100000 -E 1e-3 -t $THREADS --preset exhaustive --quiet
+  timed saber_v1.4_exhaustive 1 $SEC/saber_v1.4_exhaustive.m8 -- $VN -q $Q -d $DB -k 100000 -E 1e-3 -t $THREADS --preset exhaustive --quiet
   for p in very-fast fast default sensitive more-sensitive; do
-    timed saber_v1.3_$p $REPS $SEC/saber_v1.3_$p.m8 -- $V13 -q $Q -d $DB -k 100000 -E 1e-3 -t $THREADS --preset $p --quiet --stats $SEC/saber_v1.3_$p.stats.json
+    timed saber_v1.4_$p $REPS $SEC/saber_v1.4_$p.m8 -- $VN -q $Q -d $DB -k 100000 -E 1e-3 -t $THREADS --preset $p --quiet --stats $SEC/saber_v1.4_$p.stats.json
   done
   for m in fast default mid-sensitive sensitive very-sensitive ultra-sensitive; do
     timed diamond_$m $REPS $SEC/diamond_$m.m8 -- $DMD blastp -q $Q -d $SEC/db.dmnd --threads $THREADS -k 0 -e 1e-3 $(dflag $m) --quiet -o /dev/stdout
   done
-  timed saber_v1.2_default $REPS $SEC/saber_v1.2_default.m8 -- $V12 -q $Q -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet
+  timed saber_v1.3_default $REPS $SEC/saber_v1.3_default.m8 -- $VO -q $Q -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet
   log "mmseqs: database-size scaling"
   for d in db25 db50 db400; do
     local D=$DER/mm.$d.fa
     $DMD makedb --in $D -d $SEC/$d --quiet
-    timed scale_${d}_saber_v1.3_default 1 - -- $V13 -q $Q -d $D -k 100000 -E 1e-3 -t $THREADS --quiet
-    timed scale_${d}_saber_v1.2_default 1 - -- $V12 -q $Q -d $D -k 100000 -E 1e-3 -t $THREADS --quiet
+    timed scale_${d}_saber_v1.4_default 1 - -- $VN -q $Q -d $D -k 100000 -E 1e-3 -t $THREADS --quiet
+    timed scale_${d}_saber_v1.3_default 1 - -- $VO -q $Q -d $D -k 100000 -E 1e-3 -t $THREADS --quiet
     timed scale_${d}_diamond_very-sensitive 1 - -- $DMD blastp -q $Q -d $SEC/$d.dmnd --threads $THREADS -k 0 -e 1e-3 --very-sensitive --quiet -o /dev/null
     timed scale_${d}_diamond_default 1 - -- $DMD blastp -q $Q -d $SEC/$d.dmnd --threads $THREADS -k 0 -e 1e-3 --quiet -o /dev/null
   done
   log "mmseqs: query-count scaling"
   for n in 50 100 250; do
     local QQ=$DER/mm.q$n.fa
-    timed scaleq_${n}_saber_v1.3_default 1 - -- $V13 -q $QQ -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet
+    timed scaleq_${n}_saber_v1.4_default 1 - -- $VN -q $QQ -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet
     timed scaleq_${n}_diamond_very-sensitive 1 - -- $DMD blastp -q $QQ -d $SEC/db.dmnd --threads $THREADS -k 0 -e 1e-3 --very-sensitive --quiet -o /dev/null
   done
   log "mmseqs: long proteins (every 5th of the 494 sequences > 1,500 aa)"
   subset $DER/mm.long.fa $SEC/long_queries.fa 5
-  timed long_saber_v1.3_default 1 $SEC/long_saber_v1.3_default.m8 -- $V13 -q $SEC/long_queries.fa -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet --stats $SEC/long_saber_v1.3_default.stats.json
-  timed long_saber_v1.2_default 1 $SEC/long_saber_v1.2_default.m8 -- $V12 -q $SEC/long_queries.fa -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet
+  timed long_saber_v1.4_default 1 $SEC/long_saber_v1.4_default.m8 -- $VN -q $SEC/long_queries.fa -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet --stats $SEC/long_saber_v1.4_default.stats.json
+  timed long_saber_v1.3_default 1 $SEC/long_saber_v1.3_default.m8 -- $VO -q $SEC/long_queries.fa -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet
   timed long_diamond_very-sensitive 1 $SEC/long_diamond_very-sensitive.m8 -- $DMD blastp -q $SEC/long_queries.fa -d $SEC/db.dmnd --threads $THREADS -k 0 -e 1e-3 --very-sensitive --quiet -o /dev/stdout
 }
 
@@ -296,26 +302,26 @@ sec_index() {
   local Q=$DATA/mmseqs_QUERY.fasta
   for d in mmseqs_DB:$DATA/mmseqs_DB.fasta db400:$DER/mm.db400.fa; do
     local n=${d%%:*} f=${d#*:}
-    timed makedb_saber_v1.3_$n $REPS - -- $V13 --makedb $SEC/$n.sdx -d $f --quiet
+    timed makedb_saber_v1.4_$n $REPS - -- $VN --makedb $SEC/$n.sdx -d $f --quiet
     timed makedb_diamond_$n $REPS - -- $DMD makedb --in $f -d $SEC/$n --threads $THREADS --quiet
-    timed makedb_saber_v1.2_$n 1 - -- $V12 --makedb $SEC/$n.v12.sdx -d $f --quiet
-    ls -l $SEC/$n.sdx $SEC/$n.dmnd $SEC/$n.v12.sdx >> $SEC/sizes.txt || true
-    rm -f $SEC/$n.v12.sdx
-    timed db_warm_saber_v1.3_$n $REPS - -- $V13 -q $Q --db $SEC/$n.sdx -k 100000 -E 1e-3 -t $THREADS --quiet
+    timed makedb_saber_v1.3_$n 1 - -- $VO --makedb $SEC/$n.vo.sdx -d $f --quiet
+    ls -l $SEC/$n.sdx $SEC/$n.dmnd $SEC/$n.vo.sdx >> $SEC/sizes.txt || true
+    rm -f $SEC/$n.vo.sdx
+    timed db_warm_saber_v1.4_$n $REPS - -- $VN -q $Q --db $SEC/$n.sdx -k 100000 -E 1e-3 -t $THREADS --quiet
     timed db_warm_diamond_very-sensitive_$n $REPS - -- $DMD blastp -q $Q -d $SEC/$n.dmnd --threads $THREADS -k 0 -e 1e-3 --very-sensitive --quiet -o /dev/null
     for r in 1 2 3; do
       evict $SEC/$n.sdx
-      timed db_cold_saber_v1.3_$n 1 - -- $V13 -q $Q --db $SEC/$n.sdx -k 100000 -E 1e-3 -t $THREADS --quiet
+      timed db_cold_saber_v1.4_$n 1 - -- $VN -q $Q --db $SEC/$n.sdx -k 100000 -E 1e-3 -t $THREADS --quiet
       evict $SEC/$n.dmnd
       timed db_cold_diamond_very-sensitive_$n 1 - -- $DMD blastp -q $Q -d $SEC/$n.dmnd --threads $THREADS -k 0 -e 1e-3 --very-sensitive --quiet -o /dev/null
     done
     # an index with seed postings (several partitions): the scan schedule
     # and both index schedules must report the same alignments
-    timed makedb_saber_v1.3_${n}_postings_p4M 1 - -- $V13 --makedb $SEC/$n.p4M.sdx -d $f --partition-residues 4000000 --index-postings --quiet
+    timed makedb_saber_v1.4_${n}_postings_p4M 1 - -- $VN --makedb $SEC/$n.p4M.sdx -d $f --partition-residues 4000000 --index-postings --quiet
     ls -l $SEC/$n.p4M.sdx >> $SEC/sizes.txt
-    timed db_order_scan_$n 1 $SEC/order_scan_$n.m8 -- $V13 -q $Q --db $SEC/$n.p4M.sdx -k 100000 -E 1e-3 -t $THREADS --batch-order scan --quiet
-    timed db_order_query_$n 1 $SEC/order_query_$n.m8 -- $V13 -q $Q --db $SEC/$n.p4M.sdx -k 100000 -E 1e-3 -t $THREADS --batch-order query --quiet
-    timed db_order_partition_$n 1 $SEC/order_partition_$n.m8 -- $V13 -q $Q --db $SEC/$n.p4M.sdx -k 100000 -E 1e-3 -t $THREADS --batch-order partition --quiet
+    timed db_order_scan_$n 1 $SEC/order_scan_$n.m8 -- $VN -q $Q --db $SEC/$n.p4M.sdx -k 100000 -E 1e-3 -t $THREADS --batch-order scan --quiet
+    timed db_order_query_$n 1 $SEC/order_query_$n.m8 -- $VN -q $Q --db $SEC/$n.p4M.sdx -k 100000 -E 1e-3 -t $THREADS --batch-order query --quiet
+    timed db_order_partition_$n 1 $SEC/order_partition_$n.m8 -- $VN -q $Q --db $SEC/$n.p4M.sdx -k 100000 -E 1e-3 -t $THREADS --batch-order partition --quiet
     for o in query partition; do
       if cmp -s $SEC/order_scan_$n.m8 $SEC/order_${o}_$n.m8; then echo "$n: scan == $o-major output" >> $SEC/sizes.txt; else echo "$n: scan and $o-major outputs DIFFER" >> $SEC/sizes.txt; fi
     done
@@ -329,18 +335,18 @@ sec_translated() {
   local NQ=$DER/scop40.bt.fna P=$DATA/scop40.fa
   $DMD makedb --in $P -d $SEC/scop40 --quiet
   for p in fast default more-sensitive; do
-    timed nx_saber_v1.3_$p 1 $SEC/nx_saber_v1.3_$p.m8 -- $V13 --mode nx -q $NQ -d $P -k 100000 -E 10 -t $THREADS --preset $p --quiet --stats $SEC/nx_saber_v1.3_$p.stats.json
+    timed nx_saber_v1.4_$p 1 $SEC/nx_saber_v1.4_$p.m8 -- $VN --mode nx -q $NQ -d $P -k 100000 -E 10 -t $THREADS --preset $p --quiet --stats $SEC/nx_saber_v1.4_$p.stats.json
   done
-  timed nx_saber_v1.2_default 1 $SEC/nx_saber_v1.2_default.m8 -- $V12 --mode nx -q $NQ -d $P -k 100000 -E 10 -t $THREADS --quiet
+  timed nx_saber_v1.3_default 1 $SEC/nx_saber_v1.3_default.m8 -- $VO --mode nx -q $NQ -d $P -k 100000 -E 10 -t $THREADS --quiet
   for m in default very-sensitive ultra-sensitive; do
     timed nx_diamond_$m 1 $SEC/nx_diamond_$m.m8 -- $DMD blastx -q $NQ -d $SEC/scop40.dmnd --threads $THREADS -k 0 -e 10 $(dflag $m) --quiet -o /dev/stdout
   done
   # pn (tblastn): a fixed 1-in-37 subset of SCOP40 proteins; DIAMOND has no tblastn mode.
   subset $P $SEC/pn_queries.fa 37
   for p in default more-sensitive; do
-    timed pn_saber_v1.3_$p 1 $SEC/pn_saber_v1.3_$p.m8 -- $V13 --mode pn -q $SEC/pn_queries.fa -d $NQ -k 100000 -E 10 -t $THREADS --preset $p --quiet
+    timed pn_saber_v1.4_$p 1 $SEC/pn_saber_v1.4_$p.m8 -- $VN --mode pn -q $SEC/pn_queries.fa -d $NQ -k 100000 -E 10 -t $THREADS --preset $p --quiet
   done
-  timed pn_saber_v1.2_default 1 $SEC/pn_saber_v1.2_default.m8 -- $V12 --mode pn -q $SEC/pn_queries.fa -d $NQ -k 100000 -E 10 -t $THREADS --quiet
+  timed pn_saber_v1.3_default 1 $SEC/pn_saber_v1.3_default.m8 -- $VO --mode pn -q $SEC/pn_queries.fa -d $NQ -k 100000 -E 10 -t $THREADS --quiet
   for f in $SEC/*.m8; do
     n=$(basename $f .m8)
     local qopt=""
@@ -356,8 +362,8 @@ sec_lowc() {
   begin lowc
   local Q=$DER/lowc.query.fa DB=$DER/lowc.db.fa
   $DMD makedb --in $DB -d $SEC/lowc --quiet
-  timed lowc_saber_v1.3_default $REPS $SEC/lowc_saber_v1.3_default.m8 -- $V13 -q $Q -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet --stats $SEC/lowc_saber_v1.3_default.stats.json
-  timed lowc_saber_v1.3_default_nomask 1 $SEC/lowc_saber_v1.3_default_nomask.m8 -- $V13 -q $Q -d $DB -k 100000 -E 1e-3 -t $THREADS --masking none --comp-bias off --quiet --stats $SEC/lowc_saber_v1.3_default_nomask.stats.json
+  timed lowc_saber_v1.4_default $REPS $SEC/lowc_saber_v1.4_default.m8 -- $VN -q $Q -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet --stats $SEC/lowc_saber_v1.4_default.stats.json
+  timed lowc_saber_v1.4_default_nomask 1 $SEC/lowc_saber_v1.4_default_nomask.m8 -- $VN -q $Q -d $DB -k 100000 -E 1e-3 -t $THREADS --masking none --comp-bias off --quiet --stats $SEC/lowc_saber_v1.4_default_nomask.stats.json
   # adversarial: no masking, no frequency cap, every repeat hit enumerated --
   # memory must stay bounded (scan schedule: cuts by chunks, subjects and
   # queries, stops at subject boundaries, repeat-rich pairs scanned on their
@@ -367,13 +373,13 @@ sec_lowc() {
   # finish within 30 minutes in development, at 0.69 GB).
   subset $Q $SEC/lowc10.fa 10
   head -8 $SEC/lowc10.fa > $SEC/lowc4.fa
-  timed lowc4_saber_v1.3_default_nomask_nocap 1 $SEC/lowc4_saber_v1.3_default_nomask_nocap.m8 -- timeout 1200 $V13 -q $SEC/lowc4.fa -d $DB -k 100000 -E 1e-3 -t $THREADS --masking none --comp-bias off --seed-max-occ 1000000000 --quiet --stats $SEC/lowc4_saber_v1.3_default_nomask_nocap.stats.json
-  timed lowc10_saber_v1.3_legacy_nomask_nocap 1 $SEC/lowc10_saber_v1.3_legacy_nomask_nocap.m8 -- timeout 1200 $V13 -q $SEC/lowc10.fa -d $DB -k 100000 -E 1e-3 -t $THREADS --preset legacy --masking none --comp-bias off --seed-max-occ 1000000000 --quiet --stats $SEC/lowc10_saber_v1.3_legacy_nomask_nocap.stats.json
+  timed lowc4_saber_v1.4_default_nomask_nocap 1 $SEC/lowc4_saber_v1.4_default_nomask_nocap.m8 -- timeout 1200 $VN -q $SEC/lowc4.fa -d $DB -k 100000 -E 1e-3 -t $THREADS --masking none --comp-bias off --seed-max-occ 1000000000 --quiet --stats $SEC/lowc4_saber_v1.4_default_nomask_nocap.stats.json
+  timed lowc10_saber_v1.4_legacy_nomask_nocap 1 $SEC/lowc10_saber_v1.4_legacy_nomask_nocap.m8 -- timeout 1200 $VN -q $SEC/lowc10.fa -d $DB -k 100000 -E 1e-3 -t $THREADS --preset legacy --masking none --comp-bias off --seed-max-occ 1000000000 --quiet --stats $SEC/lowc10_saber_v1.4_legacy_nomask_nocap.stats.json
   timed lowc_diamond_default $REPS $SEC/lowc_diamond_default.m8 -- $DMD blastp -q $Q -d $SEC/lowc.dmnd --threads $THREADS -k 0 -e 1e-3 --quiet -o /dev/stdout
   timed lowc_diamond_very-sensitive $REPS $SEC/lowc_diamond_very-sensitive.m8 -- $DMD blastp -q $Q -d $SEC/lowc.dmnd --threads $THREADS -k 0 -e 1e-3 --very-sensitive --quiet -o /dev/stdout
   # real queries against a database polluted with low-complexity sequences
   local MQ=$DATA/mmseqs_QUERY.fasta
-  timed mmq_saber_v1.3_default 1 $SEC/mmq_saber_v1.3_default.m8 -- $V13 -q $MQ -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet
+  timed mmq_saber_v1.4_default 1 $SEC/mmq_saber_v1.4_default.m8 -- $VN -q $MQ -d $DB -k 100000 -E 1e-3 -t $THREADS --quiet
   timed mmq_diamond_very-sensitive 1 $SEC/mmq_diamond_very-sensitive.m8 -- $DMD blastp -q $MQ -d $SEC/lowc.dmnd --threads $THREADS -k 0 -e 1e-3 --very-sensitive --quiet -o /dev/stdout
 }
 
@@ -385,13 +391,13 @@ sec_multi() {
   for set in multi frag; do
     local Q=$DER/scop40.$set.fa
     for p in default more-sensitive; do
-      timed ${set}_saber_v1.3_$p 1 $SEC/${set}_saber_v1.3_$p.m8 -- $V13 -q $Q -d $P -k 100000 -E 10 -t $THREADS --preset $p --quiet
+      timed ${set}_saber_v1.4_$p 1 $SEC/${set}_saber_v1.4_$p.m8 -- $VN -q $Q -d $P -k 100000 -E 10 -t $THREADS --preset $p --quiet
     done
     for m in very-sensitive ultra-sensitive; do
       timed ${set}_diamond_$m 1 $SEC/${set}_diamond_$m.m8 -- $DMD blastp -q $Q -d $SEC/scop40.dmnd --threads $THREADS -k 0 -e 10 --$m --quiet -o /dev/stdout
     done
   done
-  for a in saber_v1.3_default saber_v1.3_more-sensitive diamond_very-sensitive diamond_ultra-sensitive; do
+  for a in saber_v1.4_default saber_v1.4_more-sensitive diamond_very-sensitive diamond_ultra-sensitive; do
     $PY $HERE/eval_multi.py $SEC/multi_$a.m8 $OUT/scop/$a.m8 $LAB --name $a > $SEC/multi_$a.metrics.json
     for sub in tune test all; do $EVAL $SEC/frag_$a.m8 $LAB --subset $sub --name frag_$a > $SEC/frag_$a.$sub.metrics.json; done
   done
@@ -404,15 +410,15 @@ sec_threads() {
   $DMD makedb --in $Q -d $SEC/scop40 --quiet
   subset $DER/mm.long.fa $SEC/long20.fa 25
   for t in 1 2; do
-    timed t${t}_saber_v1.3_default $REPS - -- $V13 -q $Q -d $Q -k 100000 -E 10 -t $t --quiet
+    timed t${t}_saber_v1.4_default $REPS - -- $VN -q $Q -d $Q -k 100000 -E 10 -t $t --quiet
     timed t${t}_diamond_very-sensitive $REPS - -- $DMD blastp -q $Q -d $SEC/scop40.dmnd --threads $t -k 0 -e 10 --very-sensitive --quiet -o /dev/null
     # one query per batch: the database is split across the threads
-    timed t${t}_saber_v1.3_onequery $REPS - -- $V13 -q $SEC/long20.fa -d $DER/mm.db400.fa -k 100000 -E 1e-3 -t $t --query-batch 1 --quiet
+    timed t${t}_saber_v1.4_onequery $REPS - -- $VN -q $SEC/long20.fa -d $DER/mm.db400.fa -k 100000 -E 1e-3 -t $t --query-batch 1 --quiet
   done
 }
 
 # --------------------------------------------------------------- preset selection
-# Configurations considered for the 1.3 presets, on the tune splits of both
+# Configurations considered for the 1.3 presets (unchanged in 1.4), on the tune splits of both
 # benchmarks (the test splits are never used for choosing). Needs the scale
 # section's index. Common arguments: Murphy-10 seeds, window filter with exact
 # identities weighted 2, scoring band +-48.
@@ -428,9 +434,9 @@ sec_sweep() {
   while read -r name shapes T ff pf; do
     [ -z "$name" ] && continue
     local args="$base --seed-shape ${!shapes} --hit-filter-ids $T --hsp-floor-fraction $ff --score-prefilter-band $pf"
-    timed sc_$name 1 $SEC/sc_$name.m8 -- $V13 -q $Q --db $IDX -k 100000 -E 10 -t $THREADS --quiet $args
+    timed sc_$name 1 $SEC/sc_$name.m8 -- $VN -q $Q --db $IDX -k 100000 -E 10 -t $THREADS --quiet $args
     $EVAL $SEC/sc_$name.m8 $LAB --subset tune --name sc_$name --decoy-prefix REV_ --decoys 80000 > $SEC/sc_$name.tune.metrics.json
-    timed av_$name 1 $SEC/av_$name.m8 -- $V13 -q $Q -d $Q -k 100000 -E 10 -t $THREADS --quiet $args
+    timed av_$name 1 $SEC/av_$name.m8 -- $VN -q $Q -d $Q -k 100000 -E 10 -t $THREADS --quiet $args
     $EVAL $SEC/av_$name.m8 $LAB --subset tune --name av_$name > $SEC/av_$name.tune.metrics.json
     rm -f $SEC/sc_$name.m8 $SEC/av_$name.m8
   done <<'CONFIGS'
@@ -447,15 +453,116 @@ w8_T27_f65_pf16 W8 27 0.65 16
 CONFIGS
   # DS16 followed by W8 (24 shapes)
   local args="$base --seed-shape $DS,$W8 --hit-filter-ids 27 --hsp-floor-fraction 0.65 --score-prefilter-band 16"
-  timed sc_ds16w8_T27_f65_pf16 1 $SEC/sc_ds16w8_T27_f65_pf16.m8 -- $V13 -q $Q --db $IDX -k 100000 -E 10 -t $THREADS --quiet $args
+  timed sc_ds16w8_T27_f65_pf16 1 $SEC/sc_ds16w8_T27_f65_pf16.m8 -- $VN -q $Q --db $IDX -k 100000 -E 10 -t $THREADS --quiet $args
   $EVAL $SEC/sc_ds16w8_T27_f65_pf16.m8 $LAB --subset tune --name sc_ds16w8_T27_f65_pf16 --decoy-prefix REV_ --decoys 80000 > $SEC/sc_ds16w8_T27_f65_pf16.tune.metrics.json
-  timed av_ds16w8_T27_f65_pf16 1 $SEC/av_ds16w8_T27_f65_pf16.m8 -- $V13 -q $Q -d $Q -k 100000 -E 10 -t $THREADS --quiet $args
+  timed av_ds16w8_T27_f65_pf16 1 $SEC/av_ds16w8_T27_f65_pf16.m8 -- $VN -q $Q -d $Q -k 100000 -E 10 -t $THREADS --quiet $args
   $EVAL $SEC/av_ds16w8_T27_f65_pf16.m8 $LAB --subset tune --name av_ds16w8_T27_f65_pf16 > $SEC/av_ds16w8_T27_f65_pf16.tune.metrics.json
   rm -f $SEC/sc_ds16w8_T27_f65_pf16.m8 $SEC/av_ds16w8_T27_f65_pf16.m8
 }
 
+# --------------------------------------------------------------- scaling with database size
+# SCOP40 against SCOP40 + K x 20,000 reversed proteins (make_scaling_dbs.py;
+# K = 4 is the scale section's database), K in SCALING_K. Per size: index
+# construction; SABER 1.4 default and DIAMOND --very-sensitive alternating
+# (REPS each); SABER very-fast and more-sensitive, SABER 1.3.0 default,
+# DIAMOND default and --ultra-sensitive (one run each); the one-off pair
+# (SABER on the FASTA, DIAMOND makedb + blastp; one run each). Outputs of the
+# searches are evaluated with --decoys = K x 20,000.
+sec_scaling() {
+  begin scaling
+  local Q=$DATA/scop40.fa SD=$DER/scaling
+  local kl=$(echo $SCALING_K | tr ' ' ',')
+  [ -s $SD/scale_k${SCALING_K##* }.fa ] || $PY $HERE/make_scaling_dbs.py $DATA/scop40.fa $DATA/mmseqs_DB.fasta $DER/mm.db400.fa $SD --k $kl > $SEC/datasets.txt
+  for K in $SCALING_K; do
+    local DB=$SD/scale_k$K.fa P=$SEC/k$K
+    sha256sum $DB >> $SEC/dataset.sha256
+    awk -v K=$K '/^>/{n++; next} {r += length($0)} END {print K "\t" n "\t" r "\t" K * 20000}' $DB >> $SEC/dbsizes.tsv
+    log "scaling: K=$K ($(grep -c '^>' $DB) sequences)"
+    timed k${K}_makedb_saber_v1.4 1 - -- $VN --makedb $P.sdx -d $DB --quiet
+    timed k${K}_makedb_diamond 1 - -- $DMD makedb --in $DB -d $P --threads $THREADS --quiet
+    ls -l $P.sdx $P.dmnd >> $SEC/sizes.txt
+    for r in $(seq $REPS); do
+      timed k${K}_saber_v1.4_default 1 $P.saber_v1.4_default.m8 -- $VN -q $Q --db $P.sdx -k 100000 -E 10 -t $THREADS --quiet --stats $P.saber_v1.4_default.stats.json
+      timed k${K}_diamond_very-sensitive 1 $P.diamond_very-sensitive.m8 -- $DMD blastp -q $Q -d $P.dmnd --threads $THREADS -k 0 -e 10 --very-sensitive --quiet -o /dev/stdout
+    done
+    for p in very-fast more-sensitive; do
+      timed k${K}_saber_v1.4_$p 1 $P.saber_v1.4_$p.m8 -- $VN -q $Q --db $P.sdx -k 100000 -E 10 -t $THREADS --preset $p --quiet
+    done
+    timed k${K}_saber_v1.3_default 1 $P.saber_v1.3_default.m8 -- $VO -q $Q --db $P.sdx -k 100000 -E 10 -t $THREADS --quiet
+    timed k${K}_diamond_default 1 $P.diamond_default.m8 -- $DMD blastp -q $Q -d $P.dmnd --threads $THREADS -k 0 -e 10 --quiet -o /dev/stdout
+    timed k${K}_diamond_ultra-sensitive 1 $P.diamond_ultra-sensitive.m8 -- timeout 3600 $DMD blastp -q $Q -d $P.dmnd --threads $THREADS -k 0 -e 10 --ultra-sensitive --quiet -o /dev/stdout
+    rm -f $P.sdx $P.dmnd
+    # no preparation step
+    timed k${K}_saber_v1.4_default_fasta 1 $P.saber_v1.4_default_fasta.m8 -- $VN -q $Q -d $DB -k 100000 -E 10 -t $THREADS --quiet --stats $P.saber_v1.4_default_fasta.stats.json
+    timed k${K}_diamond_very-sensitive_makedb_blastp 1 - -- bash -c "$DMD makedb --in $DB -d $P.oo --threads $THREADS --quiet && $DMD blastp -q $Q -d $P.oo.dmnd --threads $THREADS -k 0 -e 10 --very-sensitive --quiet -o /dev/null"
+    rm -f $P.oo.dmnd
+    if cmp -s $P.saber_v1.4_default_fasta.m8 $P.saber_v1.4_default.m8; then echo "K=$K: in-memory index output == prebuilt index output" >> $SEC/outputs_check.txt; else echo "K=$K: in-memory and prebuilt index outputs DIFFER" >> $SEC/outputs_check.txt; fi
+    rm -f $P.saber_v1.4_default_fasta.m8
+  done
+  log "scaling: evaluation"
+  for K in $SCALING_K; do
+    for f in $SEC/k$K.*.m8; do
+      local n=$(basename $f .m8)
+      for sub in tune test all; do
+        $EVAL $f $LAB --subset $sub --name $n --decoy-prefix REV_ --decoys $((K * 20000)) > $SEC/$n.$sub.metrics.json
+      done
+    done
+  done
+}
+
+# --------------------------------------------------------------- length-matched decoys
+# The scale section's decoys are whole proteins, longer than the SCOP40
+# domains; SABER's per-subject E-values give a hit in a long subject a larger
+# E-value, which favours SABER on that database. Here the same 80,000 reversed
+# proteins are cut into pieces with the lengths of SCOP40 domains
+# (make_lenmatched_db.py), so true and false subjects have the same length
+# distribution.
+sec_lenmatch() {
+  begin lenmatch
+  local Q=$DATA/scop40.fa DB=$DER/scaling/scale_k4L.fa
+  [ -s $DB ] || $PY $HERE/make_lenmatched_db.py $DATA/scop40.fa $DER/mm.db400.fa $DB --sources 80000 > $SEC/datasets.txt
+  sha256sum $DB > $SEC/dataset.sha256
+  local N=$(grep -c '^>REV_' $DB)
+  $VN --makedb $SEC/k4L.sdx -d $DB --quiet
+  $DMD makedb --in $DB -d $SEC/k4L --threads $THREADS --quiet
+  for r in $(seq $REPS); do
+    timed saber_v1.4_default 1 $SEC/saber_v1.4_default.m8 -- $VN -q $Q --db $SEC/k4L.sdx -k 100000 -E 10 -t $THREADS --quiet
+    timed diamond_very-sensitive 1 $SEC/diamond_very-sensitive.m8 -- $DMD blastp -q $Q -d $SEC/k4L.dmnd --threads $THREADS -k 0 -e 10 --very-sensitive --quiet -o /dev/stdout
+  done
+  timed saber_v1.4_default_dbmodel 1 $SEC/saber_v1.4_default_dbmodel.m8 -- $VN -q $Q --db $SEC/k4L.sdx -k 100000 -E 10 -t $THREADS --evalue-model database --quiet
+  timed saber_v1.4_more-sensitive 1 $SEC/saber_v1.4_more-sensitive.m8 -- $VN -q $Q --db $SEC/k4L.sdx -k 100000 -E 10 -t $THREADS --preset more-sensitive --quiet
+  timed diamond_ultra-sensitive 1 $SEC/diamond_ultra-sensitive.m8 -- $DMD blastp -q $Q -d $SEC/k4L.dmnd --threads $THREADS -k 0 -e 10 --ultra-sensitive --quiet -o /dev/stdout
+  rm -f $SEC/k4L.sdx $SEC/k4L.dmnd
+  for f in $SEC/*.m8; do
+    local n=$(basename $f .m8)
+    for sub in tune test all; do
+      $EVAL $f $LAB --subset $sub --name $n --decoy-prefix REV_ --decoys $N > $SEC/$n.$sub.metrics.json
+    done
+  done
+}
+
+# --------------------------------------------------------------- scaling with the number of queries
+# 1, 10, 100, 1,000 and all 11,206 SCOP40 domains (every N-th) against the
+# scale section's database, prebuilt indexes: SABER 1.4 default, SABER 1.3.0
+# default, DIAMOND --very-sensitive.
+sec_qscale() {
+  begin qscale
+  local IDX=$OUT/scale
+  [ -s $IDX/scale.sdx ] && [ -s $IDX/scale.dmnd ] || { log "qscale: run the scale section first"; return 1; }
+  for n in 1 10 100 1000 11206; do
+    local QQ=$SEC/q$n.fa
+    subset $DATA/scop40.fa $QQ $((11206 / n))
+    head -$((2 * n)) $QQ > $QQ.tmp && mv $QQ.tmp $QQ
+    for r in $(seq $REPS); do
+      timed q${n}_saber_v1.4_default 1 - -- $VN -q $QQ --db $IDX/scale.sdx -k 100000 -E 10 -t $THREADS --quiet
+      timed q${n}_saber_v1.3_default 1 - -- $VO -q $QQ --db $IDX/scale.sdx -k 100000 -E 10 -t $THREADS --quiet
+      timed q${n}_diamond_very-sensitive 1 - -- $DMD blastp -q $QQ -d $IDX/scale.dmnd --threads $THREADS -k 0 -e 10 --very-sensitive --quiet -o /dev/null
+    done
+  done
+}
+
 sections=("$@")
-[ ${#sections[@]} -eq 0 ] && sections=(env scale scop decoy mmseqs index translated lowc multi threads sweep scale_extra scale_algo oneoff)
+[ ${#sections[@]} -eq 0 ] && sections=(env scale scop decoy mmseqs index translated lowc multi threads sweep scale_extra scale_algo oneoff scaling lenmatch qscale)
 for s in "${sections[@]}"; do
   log "=== section $s ==="
   sec_$s

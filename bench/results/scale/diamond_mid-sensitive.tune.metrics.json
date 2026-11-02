@@ -1,6 +1,6 @@
 {
  "name": "diamond_mid-sensitive",
- "m8": "/home/claude/bench/final13/scale/diamond_mid-sensitive.m8",
+ "m8": "/home/claude/bench/final14b/scale/diamond_mid-sensitive.m8",
  "subset": "tune",
  "n_queries": 5679,
  "n_db": 91206,

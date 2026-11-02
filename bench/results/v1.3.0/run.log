@@ -1,0 +1,51 @@
+[14:26:18] === section env ===
+[14:26:19] === section scale ===
+[14:26:19] scale: index construction
+[14:26:41] scale: SABER 1.3 default vs DIAMOND --very-sensitive, interleaved
+[14:31:47] scale: v1.3 very-fast
+[14:32:08] scale: v1.3 fast
+[14:32:48] scale: v1.3 sensitive
+[14:34:45] scale: v1.3 more-sensitive
+[14:37:58] scale: diamond fast
+[14:38:12] scale: diamond default
+[14:38:35] scale: diamond mid-sensitive
+[14:39:40] scale: diamond sensitive
+[14:41:43] scale: diamond more-sensitive
+[14:43:45] scale: diamond ultra-sensitive (1 rep)
+[14:45:46] scale: v1.2.0 default (1 rep)
+[14:51:20] === section scop ===
+[14:51:20] scop: index construction
+[14:51:21] scop: v1.3 very-fast
+[14:51:29] scop: v1.3 fast
+[14:51:42] scop: v1.3 default
+[14:52:04] scop: v1.3 sensitive
+[14:52:25] scop: v1.3 more-sensitive
+[14:53:02] scop: v1.3 legacy
+[14:53:23] scop: v1.3 default with a persistent index (--db, warm)
+[14:53:45] scop: diamond fast
+[14:53:50] scop: diamond default
+[14:53:57] scop: diamond mid-sensitive
+[14:54:16] scop: diamond sensitive
+[14:54:50] scop: diamond more-sensitive
+[14:55:25] scop: diamond very-sensitive
+[14:55:53] scop: diamond ultra-sensitive
+[14:57:36] scop: v1.2.0
+[15:01:44] scop: v1.3 exhaustive (1 rep)
+[15:04:56] === section decoy ===
+[15:06:18] === section mmseqs ===
+[15:06:18] mmseqs: exhaustive reference
+[15:11:04] mmseqs: database-size scaling
+[15:12:23] mmseqs: query-count scaling
+[15:12:42] mmseqs: long proteins (every 5th of the 494 sequences > 1,500 aa)
+[15:13:01] === section index ===
+[15:20:00] === section translated ===
+[15:23:00] done
+[15:23:06] === section lowc ===
+[15:25:33] === section multi ===
+[15:26:00] === section threads ===
+[15:35:32] === section sweep ===
+[15:42:19] === section scale_extra ===
+[15:44:39] === section scale_algo ===
+[15:49:46] === section oneoff ===
+[15:49:46] oneoff: SABER 1.3 default on the FASTA vs DIAMOND makedb + blastp --very-sensitive, interleaved
+[15:55:21] done

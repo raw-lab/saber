@@ -1,4 +1,4 @@
-//! SABER command-line entry point (v1.3).
+//! SABER command-line entry point (v1.4).
 //!
 //! Every search goes through one engine ([`saber_rs::search::engine`]):
 //! partitioned seed index → bounded seed processing → ungapped extension →
@@ -341,6 +341,13 @@ struct Args {
     #[arg(long, default_value_t = 0, hide = true)]
     scan_pair_survivors: usize,
 
+    /// Reference database size of the heuristics: above it, the region
+    /// thresholds use the score floor of a database of this size and the
+    /// automatic seed-frequency cap's floor grows with the database (0 = the
+    /// database's own size and a fixed floor, as in 1.3; advanced).
+    #[arg(long, default_value_t = saber_rs::search::engine::REF_DB_RESIDUES, hide = true)]
+    ref_db_residues: u64,
+
     /// Write a JSON run summary (timings, peak RSS, work counters,
     /// heuristic limits that were hit) to this file.
     #[arg(long, value_name = "FILE")]
@@ -519,6 +526,7 @@ fn real_main(args: Args, m: &ArgMatches) -> Result<(), String> {
     p.score_prefilter_band = args.score_prefilter_band.map_or(preset.prefilter_band, |v| v as i64);
     p.score_prefilter_frac = args.score_prefilter_frac.clamp(0.0, 1.0);
     p.scan_pair_survivors = args.scan_pair_survivors;
+    p.ref_db_residues = args.ref_db_residues;
     p.band_pad = args.traceback_band.max(1);
     p.traceback_max_bytes = args.traceback_max_mb.max(1) << 20;
     p.neighborhood_t = args.neighborhood_t.max(0);

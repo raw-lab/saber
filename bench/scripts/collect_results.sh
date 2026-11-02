@@ -11,6 +11,7 @@ cd "$SRC"
 # invocations, so it is skipped.
 find . -type f \( -name '*.jsonl' -o -name '*.metrics.json' -o -name '*.stats.json' -o -name '*.roc.tsv' \
   -o -name 'environment*.txt' -o -name 'final_binary.txt' -o -name 'sizes.txt' -o -name 'dataset.sha256' -o -name 'rerun_check.txt' -o -name 'outputs_check.txt' \
+  -o -name 'dbsizes.tsv' -o -name 'datasets.txt' \
   -o -name 'summary.json' -o -name 'summary.md' -o -name '*.png' -o -name 'run.log' \) \
   ! -name '*.prev.jsonl' ! -name '*.prev_*.jsonl' -print0 | while IFS= read -r -d '' f; do
   mkdir -p "$DST/$(dirname "$f")"

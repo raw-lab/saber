@@ -1,0 +1,11 @@
+date: 2026-10-19T23:44:27-04:00
+host: Linux vm 6.18.44-fc-v139 #1 SMP PREEMPT_DYNAMIC @0 x86_64 x86_64 x86_64 GNU/Linux
+cpu:  Intel(R) Xeon(R) Processor @ 2.80GHz
+cache:  33792 KB
+cores: 2
+mem: MemTotal:        8222320 kB
+transparent huge pages: always [madvise] never
+diamond: diamond version 2.2.8 sha256 d3d72578fa97e87cc0846a06d2f9d7dc481a2106265f9546bc91512972fcd1f1
+/home/claude/bench/binaries/saber-1.4.0: saber 1.4.0 sha256 72c2d9ec4efee5a867d9c0aea61895ac42ca4400da4b107a0d9c79f034388a39
+/home/claude/bench/binaries/saber-1.3.0: saber 1.3.0 sha256 fe741ab1585f7ff26ebb41dff0a31fcd3e89aaf2a33cbe5f17cfdd7740e483f2
+database: /home/claude/bench/derived/scop40.scale.fa sha256 2c236086d8cf917728c07ac237eecaaebc2dfd8e781d47875dc98c3ab0ec4875

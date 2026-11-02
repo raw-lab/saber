@@ -283,6 +283,84 @@ fn stringent_evalue_only_filters_an_evalue_10_search() {
 }
 
 #[test]
+fn region_heuristics_stop_tightening_above_the_reference_size() {
+    // Above --ref-db-residues the region threshold and the two-stage scoring
+    // threshold use the floor of a database of that size, and the floor of
+    // the automatic seed-frequency cap grows with the database: more
+    // candidate regions are scored and fewer seeds skipped (here: a tiny
+    // reference size), the statistics are unchanged, and every schedule
+    // still agrees.
+    let t = Tmp::new("regref");
+    let mut r = Rng(0x5e1f);
+    let (mut qs, mut dbs) = (String::new(), String::new());
+    for i in 0..16 {
+        let n = 220 + (r.next() % 120) as usize;
+        let p = r.protein(n);
+        qs += &format!(">q{i}\n{p}\n");
+        for k in 0..3 {
+            // about 45-55 % substitutions and short indels
+            let mut h = String::new();
+            for c in p.chars() {
+                match r.next() % 100 {
+                    0..=2 => {}
+                    3..=5 => {
+                        h.push(c);
+                        h.push_str(&r.protein(1));
+                    }
+                    x if x < 48 + 3 * k as u64 => h.push_str(&r.protein(1)),
+                    _ => h.push(c),
+                }
+            }
+            dbs += &format!(">h{i}_{k}\n{}{h}{}\n", r.protein(25), r.protein(25));
+        }
+    }
+    for i in 0..400 {
+        let n = 80 + (r.next() % 400) as usize;
+        dbs += &format!(">r{i}\n{}\n", r.protein(n));
+    }
+    // a protein present 300 times: its seeds occur more often than the
+    // automatic cap's floor (256) and are skipped at the default reference
+    let rep = r.protein(70);
+    qs += &format!(">qrep\n{rep}\n");
+    for j in 0..300 {
+        dbs += &format!(">rep{j}\n{rep}\n");
+    }
+    let (q, db) = (t.file("q.fa", &qs), t.file("db.fa", &dbs));
+    let idx = t.path("db.sdx");
+    run_ok(&["--makedb", s(&idx), "-d", s(&db), "--index-postings", "--quiet"]);
+    // a small database: a region threshold at the whole floor and a low
+    // absolute minimum, so that the floor-relative threshold applies
+    let run = |extra: &[&str], stats: &Path| -> String {
+        let mut a = vec!["-q", s(&q), "--db", s(&idx), "--quiet", "-k", "1000", "-E", "10", "--stats", s(stats)];
+        a.extend_from_slice(&["--hsp-threshold", "20", "--hsp-floor-fraction", "1.0"]);
+        a.extend_from_slice(extra);
+        run_ok(&a)
+    };
+    let (s0, s1, s2) = (t.path("s0.json"), t.path("s1.json"), t.path("s2.json"));
+    let default = run(&[], &s0);
+    // the database is far below the default reference size: no change
+    assert_eq!(run(&["--ref-db-residues", "0"], &s1), default);
+    let small = run(&["--ref-db-residues", "1000"], &s2);
+    let counter = |p: &Path, c: &str| json_stats(p)["counters"][c].as_u64().unwrap();
+    assert!(counter(&s2, "regions") > counter(&s0, "regions"), "a small reference size scores more regions: {} vs {}", counter(&s2, "regions"), counter(&s0, "regions"));
+    assert!(counter(&s0, "seeds_frequent_skipped") > 0, "the repeated protein's seeds are over the cap");
+    assert_eq!(counter(&s2, "seeds_frequent_skipped"), 0, "above the reference size the cap's floor grows with the database");
+    let pairs = |out: &str| -> std::collections::BTreeSet<(String, String)> {
+        out.lines().map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (f[0].to_string(), f[1].to_string())
+        }).collect()
+    };
+    assert!(pairs(&small).is_superset(&pairs(&default)), "scoring more regions loses no pair");
+    let reps = |out: &str| pairs(out).iter().filter(|(a, b)| a == "qrep" && b.starts_with("rep")).count();
+    assert!(reps(&small) > reps(&default), "the repeated protein's copies are found once its seeds are used");
+    let (s3, s4) = (t.path("s3.json"), t.path("s4.json"));
+    assert_eq!(run(&["--ref-db-residues", "1000", "--batch-order", "query", "-t", "2"], &s3), small, "schedules agree");
+    assert_eq!(run(&["--batch-order", "query", "-t", "2"], &s4), default, "schedules agree with seeds skipped");
+    assert_eq!(counter(&s4, "seeds_frequent_skipped"), counter(&s0, "seeds_frequent_skipped"));
+}
+
+#[test]
 fn evalue_models_share_alignments_and_bit_scores() {
     let t = Tmp::new("evm");
     let (q, db) = protein_case(&t, 10);

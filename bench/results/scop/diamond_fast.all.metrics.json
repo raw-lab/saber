@@ -1,6 +1,6 @@
 {
  "name": "diamond_fast",
- "m8": "/home/claude/bench/final13/scop/diamond_fast.m8",
+ "m8": "/home/claude/bench/final14b/scop/diamond_fast.m8",
  "subset": "all",
  "n_queries": 11206,
  "n_db": 11206,

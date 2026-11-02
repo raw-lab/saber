@@ -296,31 +296,39 @@ fn scalar_and_simd_hit_paths_agree() {
 fn scan_schedule_scalar_and_avx2_paths_match_the_index_schedule() {
     // Dense (weight 3) and blocked (weight 7) seed tables, the exact-identity
     // weighted window filter and banded scoring: the scan schedule (AVX2 and
-    // forced-scalar paths) must report exactly the query-major results.
+    // forced-scalar paths) must report exactly the query-major results. Seed
+    // alphabets: Murphy-10 and the full alphabet (packed window bytes, two
+    // and zero rank bits) and one whose window bytes cannot be packed (a
+    // group of nine among twelve letters: the portable filter on every host).
     use saber_rs::search::engine::ScanSeeds;
     let (queries, db) = dataset(0x5ca9, 10, 300);
-    let shapes = ["11110111", "110010101011", "111"];
-    let idx = build(&db, "murphy10", &shapes, MaskingMode::Tantan, 64 << 20);
-    let mut p = SearchParams::default();
-    p.max_target_seqs = 50;
-    p.hit_filter_min_ids = 22;
-    p.hit_filter_exact_weight = 2;
-    p.score_band = 32;
-    p.score_prefilter_band = 8;
-    let seeds = || ScanSeeds { alphabet: SeedAlphabet::parse("murphy10").unwrap(), shapes: shapes.iter().map(|s| SeedShape::parse(s).unwrap()).collect() };
-    let index_sched = engine(&idx, p.clone());
-    let fast = engine(&idx, p.clone()).with_scan_seeds(seeds());
-    let mut slow = engine(&idx, p).with_scan_seeds(seeds());
-    slow.force_scalar_hit_path();
-    assert!(fast.scan_available() && slow.scan_available());
-    let encoded: Vec<EncodedProtein> = queries.iter().map(|q| EncodedProtein::from_ascii(q)).collect();
-    let views: Vec<&[u8]> = encoded.iter().map(|e| e.as_slice()).collect();
-    let mut w = Worker::new();
-    let want: Vec<Vec<Key>> = views.iter().map(|q| keys(&index_sched.search(q, &mut w))).collect();
-    assert!(want.iter().map(|k| k.len()).sum::<usize>() >= 20, "planted homologs must be found");
-    for (name, eng) in [("avx2", &fast), ("scalar", &slow)] {
-        let got: Vec<Vec<Key>> = eng.search_scan(&views).iter().map(|(h, _)| keys(h)).collect();
-        assert_eq!(got, want, "scan schedule ({name}) differs from the query-major schedule");
+    for (alpha, shapes, min_found) in [
+        ("murphy10", &["11110111", "110010101011", "111"][..], 20usize),
+        ("full", &["1111", "11011", "111"][..], 1),
+        ("custom:ACDEFGHIK L M N P Q R S T V W Y", &["111011", "1101011", "111"][..], 1),
+    ] {
+        let idx = build(&db, alpha, shapes, MaskingMode::Tantan, 64 << 20);
+        let mut p = SearchParams::default();
+        p.max_target_seqs = 50;
+        p.hit_filter_min_ids = 22;
+        p.hit_filter_exact_weight = 2;
+        p.score_band = 32;
+        p.score_prefilter_band = 8;
+        let seeds = || ScanSeeds { alphabet: SeedAlphabet::parse(alpha).unwrap(), shapes: shapes.iter().map(|s| SeedShape::parse(s).unwrap()).collect() };
+        let index_sched = engine(&idx, p.clone());
+        let fast = engine(&idx, p.clone()).with_scan_seeds(seeds());
+        let mut slow = engine(&idx, p).with_scan_seeds(seeds());
+        slow.force_scalar_hit_path();
+        assert!(fast.scan_available() && slow.scan_available());
+        let encoded: Vec<EncodedProtein> = queries.iter().map(|q| EncodedProtein::from_ascii(q)).collect();
+        let views: Vec<&[u8]> = encoded.iter().map(|e| e.as_slice()).collect();
+        let mut w = Worker::new();
+        let want: Vec<Vec<Key>> = views.iter().map(|q| keys(&index_sched.search(q, &mut w))).collect();
+        assert!(want.iter().map(|k| k.len()).sum::<usize>() >= min_found, "{alpha}: planted homologs must be found");
+        for (name, eng) in [("avx2", &fast), ("scalar", &slow)] {
+            let got: Vec<Vec<Key>> = eng.search_scan(&views).iter().map(|(h, _)| keys(h)).collect();
+            assert_eq!(got, want, "{alpha}: scan schedule ({name}) differs from the query-major schedule");
+        }
     }
 }
 

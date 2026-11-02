@@ -1,0 +1,10 @@
+-rw-r--r-- 1 root root 11844173 Oct 19 21:15 /home/claude/bench/final14b/scaling/k1.dmnd
+-rw-r--r-- 1 root root 12288445 Oct 19 21:15 /home/claude/bench/final14b/scaling/k1.sdx
+-rw-r--r-- 1 root root 21459742 Oct 19 21:18 /home/claude/bench/final14b/scaling/k2.dmnd
+-rw-r--r-- 1 root root 22583760 Oct 19 21:18 /home/claude/bench/final14b/scaling/k2.sdx
+-rw-r--r-- 1 root root 40690880 Oct 19 21:23 /home/claude/bench/final14b/scaling/k4.dmnd
+-rw-r--r-- 1 root root 43983831 Oct 19 21:23 /home/claude/bench/final14b/scaling/k4.sdx
+-rw-r--r-- 1 root root 79213156 Oct 19 21:31 /home/claude/bench/final14b/scaling/k8.dmnd
+-rw-r--r-- 1 root root 88810804 Oct 19 21:31 /home/claude/bench/final14b/scaling/k8.sdx
+-rw-r--r-- 1 root root 156297708 Oct 19 21:43 /home/claude/bench/final14b/scaling/k16.dmnd
+-rw-r--r-- 1 root root 181773675 Oct 19 21:43 /home/claude/bench/final14b/scaling/k16.sdx

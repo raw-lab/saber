@@ -1,0 +1,12 @@
+{
+ "name": "diamond_very-sensitive",
+ "evalue": 0.001,
+ "queries_with_hits": 400,
+ "retention_weaker": 0.9380530973451328,
+ "retention_stronger": 0.9474539544962081,
+ "weaker_tp_alone": 226,
+ "weaker_tp_in_multidomain": 212,
+ "stronger_tp_alone": 1846,
+ "stronger_tp_in_multidomain": 1749,
+ "fp_multidomain": 0
+}

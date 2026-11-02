@@ -12,7 +12,7 @@ help:
 	@echo "  make release        - Build optimized release binary"
 	@echo "  make test           - Run all tests"
 	@echo "  make demo           - Run a smoke test against bundled example FASTA"
-	@echo "  make benchmark      - Reproducible SABER 1.0.2/1.1.0/1.2/DIAMOND suite (bench/README.md)"
+	@echo "  make benchmark      - Reproducible SABER 1.4/1.3.0/DIAMOND suite (bench/README.md)"
 	@echo "  make benchmark-blast - Quick SABER vs NCBI blastp run (blastp on PATH)"
 	@echo "  make bench          - Alignment-kernel micro-benchmarks"
 	@echo "  make examples       - Run the example scripts in examples/"
@@ -95,13 +95,13 @@ demo: release
 	@echo "=== tblastn (pn, translated db) ==="
 	./target/release/saber -q examples/protein_query.fa    -d examples/nucleotide_db.fa  --mode pn --outfmt m8 --quiet | head -6
 
-# Reproducible comparison with SABER 1.0.2 / 1.1.0 and DIAMOND (bench/README.md).
-# Needs the public datasets and the other binaries; set V102 V110 DMD DATA DER
+# Reproducible comparison with SABER 1.3.0 and DIAMOND (bench/README.md).
+# Needs the public datasets and the other binaries; set VO DMD DATA DER
 # (see the header of bench/scripts/run_all.sh), optionally SECTIONS="scop decoy"
-# and BENCH_OUT (results directory).
+# and BENCH_OUT (results directory). VN defaults to this build.
 BENCH_OUT ?= $(CURDIR)/bench/out
 benchmark: release
-	OUT=$(BENCH_OUT) V12=$${V12:-$(CURDIR)/target/release/saber} bash bench/scripts/run_all.sh $(SECTIONS)
+	OUT=$(BENCH_OUT) VN=$${VN:-$(CURDIR)/target/release/saber} bash bench/scripts/run_all.sh $(SECTIONS)
 	python3 -I bench/scripts/summarize.py $(BENCH_OUT)
 
 # Quick side-by-side run against NCBI BLAST+ (blastp on PATH) on the 1.x

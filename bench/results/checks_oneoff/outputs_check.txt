@@ -1,0 +1,2 @@
+saber_v1.4_default_fasta.m8: identical to the scale section's prebuilt-index output
+saber_v1.3_default_fasta.m8: identical to SABER 1.4's output
